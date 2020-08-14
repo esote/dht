@@ -1,0 +1,178 @@
+0. Notes
+
+	A byte refers to a grouping of eight bits and is synonymous with an
+	octet. All integers are in network order.
+
+1. Message format
+
+	Messages consist of a header and payload.
+
+2. Message header format
+
+	Each message has a fixed-size header that must be included.
+
+	Format:
+
+		MAGIC [5 bytes]
+
+			MAGIC must be the bytes: 0x8F 0x4D 'K' 'A' 'D'.
+
+		IDENT_LEN [8 bytes]
+
+			Length of IDENT as an unsigned integer.
+
+		IDENT [IDENT_LEN bytes]
+
+			The network's identity. Used to distinguish multiple,
+			independent networks.
+
+		MSG_TYPE [1 byte]
+
+			Payload type. Possible values are:
+
+			0	PING
+			1	STORE
+			2	FIND_NODE
+			3	FIND_NODE_RESP
+			4	FIND_VALUE
+			5	FIND_VALUE_RESP
+			255	ERROR
+
+		RPC_ID [20 bytes]
+
+			A randomly generated value which is newly generated for
+			requests and echoed back for responses.
+
+		NODE_IP [16 bytes]
+
+			IPv6 address of the the node sending the message. For
+			IPv4 addresses use an IPv4-mapped IPv6 address.
+
+		NODE_PORT [2 bytes]
+
+			Unsigned integer network port the node sending the
+			message is listening on.
+
+		NODE_ID [20 bytes]
+
+			Identifying value for the node sending the message.
+
+3. PING message payload format
+
+	A PING message is used to determine if a node is healthy. It does not
+	contain a payload.
+
+4. STORE message payload format
+
+	A STORE message is used to ask a node to store a key-value pair.
+
+	Format:
+
+		KEY [20 bytes]
+
+			Identifier for VALUE.
+
+		LENGTH [8 bytes]
+
+			Length of VALUE as an unsigned integer.
+
+		VALUE [LENGTH bytes]
+
+			Data to be stored.
+
+5. FIND_NODE message payload format
+
+	A FIND_NODE message is used to request the closest nodes to a given
+	node. When a node receives a FIND_NODE message it responds with a
+	FIND_NODE_RESP message.
+
+	Format:
+
+		COUNT [1 byte]
+
+			Maximum count of node triples the recipient should
+			include in their response, as an unsigned integer. It
+			must not be zero.
+
+		TARGET [20 bytes]
+
+			Identifying value for the target node ID.
+
+6. FIND_NODE_RESP message payload format
+
+	A FIND_NODE_RESP message is sent in response to a FIND_NODE message.
+
+	Format:
+
+		COUNT [1 byte]
+
+			Count of node triples in the NODES field.
+
+		NODES [COUNT times]
+
+			List of node triples. NODES is only included when COUNT
+			is nonzero. Node triple format:
+
+				IP [16 bytes]
+					IP address of the node in IPv6 format.
+				PORT [2 bytes]
+					Unsigned integer port of the node.
+				ID [20 bytes]
+					Identifying value of the node.
+
+7. FIND_VALUE message payload format
+
+	A FIND_VALUE message is used to request a value from a node. When a node
+	receives a FIND_VALUE message it responds with a FIND_VALUE_RESP
+	message.
+
+	Format:
+
+		KEY [20 bytes]
+
+			Identifier for the value desired.
+
+		OFFSET [8 bytes]
+
+			Unsigned integer used to indicate the seek offset, in
+			bytes, for the desired value.
+
+		LENGTH [8 bytes]
+
+			Unsigned integer used to indicate the length, in bytes,
+			for the desired value after OFFSET is taken into
+			account. A LENGTH of zero represents an undefined
+			length, meaning the entire value after OFFSET should be
+			given.
+
+8. FIND_VALUE_RESP message payload format
+
+	A FIND_VALUE_RESP message is sent in response to a FIND_VALUE message.
+
+	Format:
+
+		LENGTH [8 bytes]
+
+			Length of VALUE as an unsigned integer. A LENGTH of zero
+			indicates this node does not have the value requested.
+
+		VALUE [LENGTH bytes]
+
+			Data received.
+
+9. ERROR message payload format
+
+	An ERROR message can be sent in response to any message except an ERROR
+	message. Returning an ERROR message is preferred to dropping the request
+	because it still indicates the node is alive.
+
+	Format:
+
+		LENGTH [8 bytes]
+
+			Length of ERROR_MSG as an unsigned integer. LENGTH must
+			not be zero.
+
+		ERROR_MSG [LENGTH bytes]
+
+			The error value.

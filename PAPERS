@@ -1,0 +1,64 @@
+=== Original paper ===
+
+https://pdos.csail.mit.edu/~petar/papers/maymounkov-kademlia-lncs.pdf
+
+=== Papers, to-review ===
+
+S/Kademlia: A Practicable Approach Towards Secure Key-Based Routing
+https://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.68.4986&rep=rep1&type=pdf
+
+An Analysis of BitTorrent’s Two Kademlia-Based DHTs
+https://scholarship.rice.edu/handle/1911/96357
+
+Tempering Kademlia with a Robust Identity Based System
+https://ieeexplore.ieee.org/abstract/document/4627256
+
+Performance evaluation of a Kademlia-based communication-oriented P2P system under churn
+https://www.sciencedirect.com/science/article/abs/pii/S1389128609002990
+
+Sub-second lookups on a large-scale Kademlia-based overlay
+https://ieeexplore.ieee.org/abstract/document/6038665
+
+Misusing Kademlia Protocol to Perform DDoS Attacks
+https://ieeexplore.ieee.org/abstract/document/4725138
+
+R/Kademlia: Recursive and topology-aware overlay routing
+https://ieeexplore.ieee.org/abstract/document/5680244
+
+Avoiding Eclipse Attacks on Kad/Kademlia: An Identity Based Approach
+https://ieeexplore.ieee.org/abstract/document/5198772
+
+S-Kademlia: A trust and reputation method to mitigate a Sybil attack in Kademlia
+(Duplicate of S/Kademlia paper?)
+https://www.sciencedirect.com/science/article/abs/pii/S1389128615004168
+
+Achieving heterogeneity and fairness in Kademlia
+https://ieeexplore.ieee.org/abstract/document/1268686
+
+HaRTKad: A hard real-time Kademlia approach
+https://ieeexplore.ieee.org/abstract/document/6866588
+
+Improving the Performance and Robustness of Kademlia-Based Overlay Networks
+https://link.springer.com/chapter/10.1007/978-3-540-69962-0_2
+
+Battery life of mobile peers with UMTS and WLAN in a Kademlia-based P2P overlay
+https://ieeexplore.ieee.org/abstract/document/5450083
+
+An Improved Kademlia Routing Algorithm for P2P Network
+https://ieeexplore.ieee.org/abstract/document/5260519
+
+Improving Lookup Performance Based on Kademlia
+https://ieeexplore.ieee.org/abstract/document/5480923
+
+Improving Lookup Performance over a Widely-Deployed DHT
+http://www.barsoom.org/papers/infocom-2006-kad.pdf
+
+=== Papers misc ===
+
+Google scholars results
+https://scholar.google.com/scholar?q=kademlia
+
+=== Misc ===
+
+Kademlia: A Design Specification (includes useful security-related notes)
+http://xlattice.sourceforge.net/components/protocol/kademlia/specs.html

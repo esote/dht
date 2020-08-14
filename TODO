@@ -1,0 +1,31 @@
+=== TODO ===
+
+dht.go: bootstrap nodes
+dht.go: logger interface in config
+dht.go: load, store functions
+
+Review papers listed in PAPERS.
+
+Unit tests & benchmarks.
+
+File-based Storer.
+
+Add README
+
+Rewrite PROTOCOL using nroff, which can convert to an IETF-style document for
+easier reading.
+
+Update PROTOCOL to better support UDP. Things which may be required:
+1) Break up STORE into an initial request, then a series of DATA packets.
+2) Break up FIND_VALUE_RESP into an initial response, then a series of DATA
+packets.
+3) Provide a framework for checking data integrit.y
+4) Define maximum and minimum message sizes so the server can choose an optimal
+buffer size.
+5) Provide NewUDPNetwork in network.go.
+^ Some of the things above require Ed25519 node IDs to prevent IP spoofing or
+DATA stream hijacking.
+
+Change node IDs to be Ed25519 256-bit (32 byte, rather than 20 byte in Kademlia
+paper) public keys -- for all the benefits if public key crypto. Similar to
+next-gen onion addresses.

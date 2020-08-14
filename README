@@ -1,0 +1,8 @@
+DHT is an experiment to write a distributed hash table following the Kademlia
+paper https://pdos.csail.mit.edu/~petar/papers/maymounkov-kademlia-lncs.pdf.
+
+DHT is in active (though perhaps slow) development.
+
+What's left? See the TODO file. The DHT Load and Store functions aren't
+implemented, I'm experimenting with concurrent self-feeding min-heaps in the
+exp/SFMH branch and will use them when I'm happy with the implementation.
