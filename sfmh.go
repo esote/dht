@@ -7,6 +7,7 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -219,20 +220,41 @@ func (f *Finder) next(i int) {
 	f.mu.Unlock()
 }
 
+// Add nodes to the heap, and remove maximum elements until len(heap) <= max.
 func (f *Finder) add(nodes []*Node) {
-	// TODO: the correct behaviour would be to add all the nodes to the
-	// heap, heapify, then remove the maximum nodes until the length <= max.
-	// For this, f.heap should be a min-max heap.
+	/*
+		TODO: use min-max heap:
+
+		The time complexity of sorting, removing max m<n (slicing is
+		assumed constant), then heapifying is:
+
+			O(n log n + 1 + log n) = O(n log n)
+
+		Using a min-max heap for poping max m<n and heapifying is:
+
+			O(m log n + log n) = O(m log n)
+
+		O(m log n) performs better than O(n log n) for m < n (the
+		common case).
+	*/
 	l := f.heap.Len()
-	if l+len(nodes) > f.max {
-		nodes = nodes[:f.max-l]
-	}
 	f.heap = append(f.heap, nodes...)
-	heap.Fix(&f.heap, l-1)
+	if len(f.heap) > f.max {
+		sort.Sort(&f.heap)
+		f.heap = f.heap[:f.max]
+		heap.Init(&f.heap)
+	} else {
+		heap.Fix(&f.heap, l-1)
+	}
 	fmt.Println(f.heap)
-	// signal rather than broadcast to avoid waking more workers than needed
-	for i := min(len(nodes), f.workers); i > 0; i-- {
-		f.cond.Signal()
+	// TODO: benchmark signaling vs broadcast (w/ potential to wake workers
+	// with nothing to do).
+	if len(f.heap) == f.workers {
+		f.cond.Broadcast()
+	} else {
+		for i := min(len(f.heap), f.workers); i > 0; i-- {
+			f.cond.Signal()
+		}
 	}
 }
 
