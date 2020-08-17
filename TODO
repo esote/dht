@@ -1,0 +1,9 @@
+- Implement static & dynamic crypto puzzles from S/Kademlia paper
+- Genenerate ed25519 key pairs
+- Describe changes to message headers & payload formats to add signatures,
+  checksums, timestamps (to avoid replay attacks), etc.
+- Want to encrypt data values when sending to nodes? Too expensive if storing
+  10gb values on the network
+- Reference best link to S/Kademlia paper, found:
+	https://ieeexplore.ieee.org/document/4447808
+	https://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.68.4986&rep=rep1&type=pdf
