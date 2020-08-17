@@ -1,5 +1,6 @@
-// DHT is an experiment to write a distributed hash table following the Kademlia
-// paper https://pdos.csail.mit.edu/~petar/papers/maymounkov-kademlia-lncs.pdf.
+// Package dht is an experiment to write a distributed hash table following the
+// Kademlia paper
+// https://pdos.csail.mit.edu/~petar/papers/maymounkov-kademlia-lncs.pdf.
 package dht
 
 import (
@@ -10,8 +11,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/esote/dht/core"
+	"github.com/esote/dht/util"
 )
 
 const (
@@ -25,6 +28,8 @@ const (
 	// FindNodeMaxCount places a limit on the maximum nodes to query when
 	// the DHT receives a FIND_NODES request.
 	FindNodeMaxCount = K
+
+	Alpha = 3
 )
 
 func init() {
@@ -140,6 +145,42 @@ func NewDHT(dir string, storer Storer, network Network, cfg *Config) (*DHT, erro
 // Load a value based on a key.
 func (dht *DHT) Load(key *core.ID) (io.Reader, error) {
 	// TODO: concurrently call FIND_VALUE
+
+	nodes, err := dht.rtable.Closest(key, K)
+	if err != nil {
+		return nil, err
+	}
+	start := make([]interface{}, len(nodes))
+	for i := range nodes {
+		start[i] = nodes[i]
+	}
+	cfg := &util.FindConfig{
+		Start:   start,
+		Target:  key,
+		Workers: Alpha,
+		Max:     K,
+		Cmp: func(a, b interface{}) int {
+			// TODO: handle a is node / id, b = node / id, grab id from
+			// node
+			return 0
+		},
+		Query: func(x interface{}) []interface{} {
+			// TODO
+			return nil
+		},
+	}
+	f, err := util.Find(cfg)
+	if err != nil {
+		return nil, err
+	}
+	timer := time.NewTimer(30 * time.Second) // TODO: func LoadContext?
+	select {
+	case found := <-f.Done:
+		_ = found
+	case <-timer.C:
+		f.Close()
+		return nil, errors.New("value not found, time limit exceeded")
+	}
 	return nil, nil
 }
 

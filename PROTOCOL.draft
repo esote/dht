@@ -1,0 +1,15 @@
+0. Message transitions:
+
+	Ping -> { Ping, Error }
+
+	StoreAsk -> { StoreOk, Error }
+	StoreOk -> { Store, Error }
+	Store -> { ε, Error }
+
+	FindNode -> { FindNodeResp, Error }
+	FindNodeResp -> ∅
+
+	FindValue -> { FindNodeResp, FindValueResp, Error }
+	FindValueResp -> ∅
+
+	Error -> ∅
