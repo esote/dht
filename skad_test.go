@@ -12,6 +12,16 @@ const (
 	c2 = c1
 )
 
+func TestCryptoPuzzle(t *testing.T) {
+	publ, _, x, err := KeypairFromPuzzles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !VerifyFromPuzzles(publ, x) {
+		t.Fatal("publ invalid")
+	}
+}
+
 func BenchmarkStatic_SHA512(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		if _, _, err := Static(c1, sha512.New()); err != nil {
