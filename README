@@ -3,4 +3,4 @@ paper https://pdos.csail.mit.edu/~petar/papers/maymounkov-kademlia-lncs.pdf.
 
 DHT is in active (though perhaps slow) development.
 
-What's left? See the TODO file.
+What's left? See the TODO and EXPERIMENTS files.
