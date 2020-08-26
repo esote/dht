@@ -1,0 +1,252 @@
+0. Introduction
+
+	This document describes the format used for communication between nodes.
+	A "byte" is the same as an "octet". All values described as integers are
+	assumed to be in network (big-endian) order. All values described as
+	random are assumed to be chosen from a cryptographically-secure source.
+
+1. Message format
+
+	Messages consist of a header and payload. Depending on a message's type
+	it may be sent over UDP or TCP. UDP messages are signed in their
+	entirety after the SIG member in the message header. Messages are
+	grouped together by their RPC ID.
+
+	The maximum message size of a UDP message is 12967 bytes.
+
+	TODO: pad messages to avoid leaking metadata (most useful for UDP msgs,
+		optional for TCP data streams to use their own padding).
+	TODO: encrypt UDP messages using public key -- for bootstrapping the X
+		must be unencrypted in ping messages, so nodes can verify the
+		node ID has completed the crypto puzzles.
+	TODO: encrypt TCP messages by generating a 256-bit key, encrypting the
+		key with the public key, then using chacha20-poly1305 with the
+		256-bit key to encrypt the data stream.
+	TODO: note security considerations, like how to store the node's private
+		key (encrypted, etc. etc.).
+
+2. Message header format
+
+	Format:
+
+		VERSION [1 byte]
+
+			Protocol version used. The version of this protocol spec
+			is 0.
+
+		SIG [64 bytes]
+
+			Ed25519 signature of the message using the public key in
+			NODE_ID. The signed message begins at the MSG_TYPE byte
+			and ends at the position determined by MSG_TYPE.
+
+		MSG_TYPE [1 byte]
+
+			Payload type.
+
+			(value)	(name)		(proto)	(sig end)
+			0	PING		UDP	Entire message
+			1	STORE		UDP	Entire message
+			2	DATA		TCP	After LENGTH field
+			3	FIND_NODE	UDP	Entire message
+			4	FIND_NODE_RESP	UDP	Entire message
+			5	FIND_VALUE	UDP	Entire message
+			6	ERROR		UDP	Entire message
+
+		NODE_IP [16 bytes]
+
+			IPv6 address of the node sending the message. For IPv4
+			addresses, use an IPv4-mapped IPv6 address.
+
+		NODE_PORT [2 bytes]
+
+			Unsigned integer network port the node is listening on.
+
+		NODE_ID [32 bytes]
+
+			Ed25519 public key of the node. See the section on node
+			ID generation for details on how this ID is chosen.
+
+		PUZ_DYN_X [64 bytes]
+
+			Value "x" used to solve the dynamic crypto puzzle. See
+			the section on node ID generation for details on how
+			this value is chosen.
+
+		RPC_ID [20 bytes]
+
+			Random value used to define a session of communication.
+
+		TIME [8 bytes]
+
+			Unsigned integer UNIX timestamp at which this message is
+			expired, which should be 30 seconds from when the
+			message will be sent.
+
+		NONCE [8 bytes]
+
+			Random value unique to each message.
+
+	A message header is 216 bytes in size.
+
+3. Node ID generation
+
+	TODO: ref S/Kademlia paper
+
+	Node identifiers are Ed25519 public keys which satisfy two "crypto
+	puzzles". Let PUBL be an Ed25519 public key. PUBL is a valid node
+	identifier if and only if:
+
+	a) H(H(PUBL)) has 26 leading zero bits, where H is SHA-512.
+
+	b) A random 64-byte value X is found such that H(H(PUBL) xor X) has 28
+	leading zero bits, where H is SHA3-512.
+
+	This scheme provides a few benefits:
+
+	a) Increases the difficulty of carefully choosing a node identifier
+	which is close to another node.
+
+	b) Increases the time required to generate a node identifier.
+
+4. Key ID generation
+
+	Keys, as used in key-value pairs, are used to identify a value. Keys are
+	the SHA-512 hash of their value.
+
+5. PING message payload format
+
+	The PING message consists only of the message header.
+
+	The PING message payload is 0 bytes in size.
+
+6. STORE message payload format
+
+	The STORE message is used to ask a node to store a key-value pair. If
+	the node agrees it responds with a PING message, and the requester sends
+	a DATA message containing the value. Otherwise the recipient should
+	respond with an ERROR message.
+
+	Format:
+
+		KEY [64 bytes]
+
+		LENGTH [8 bytes]
+
+	The STORE message payload is 72 bytes in size.
+
+7. DATA message payload format
+
+	The DATA message is used to send values between nodes. A DATA message is
+	not used to initialize communication.
+
+	Because DATA messages may contain large values they are sent over TCP.
+	Unlike other messages sent over UDP, DATA messages are signed up until
+	the VALUE field. For this reason, the header SIG field cannot be used to
+	verify the value integrity, and the expected KEY must be used for this
+	purpose.
+
+	Format:
+
+		LENGTH [8 bytes]
+
+			Length of the value field. Length must be nonzero.
+
+		VALUE [LENGTH bytes]
+
+			Data representing the value in a key-value pair.
+
+	The DATA message payload is at least 9 bytes in size.
+
+8. FIND_NODE message format
+
+	The FIND_NODE message is used to request the closest nodes to a given
+	node.
+
+	Format:
+
+		COUNT [1 byte]
+
+			Maximum count of nodes the recipient should include in
+			their response, as an unsigned integer. It must not be
+			zero.
+
+		TARGET [32 bytes]
+
+			Node identifier for the target node.
+			TODO: is FIND_NODE really only used for bootstrapping?
+
+	The FIND_NODE message payload is 33 bytes in size.
+
+9. FIND_NODE_RESP message format
+
+	The FIND_NODE_RESP message is sent in response to a FIND_NODE message.
+
+	Format:
+
+		COUNT [1 byte]
+
+			Count of node triples in the NODES field.
+
+		NODES [COUNT times]
+
+			List of node triples. NODES is only included when COUNT
+			is nonzero. A node triple does not contain sufficient
+			information to validate the node's ID. The node must be
+			sent a PING message to validate it. Node triple format:
+
+				IP [16 bytes]
+					IP address of the node in IPv6 format.
+				PORT [2 bytes]
+					Unsigned integer port of the node.
+				ID [32 bytes]
+					Identifier of the node.
+
+	The FIND_NODE_RESP message payload is between 1 byte and 12751 bytes in
+	size.
+
+10. FIND_VALUE message format
+
+	The FIND_VALUE message is used to request a value from a node. When a
+	node receives a FIND_VALUE message it may respond with FIND_VALUE_RESP
+	if the node has the value, or FIND_NODE_RESP if the node does not
+	contain the value to inform the requester of nearby nodes.
+
+	Format:
+
+		KEY [64 bytes]
+
+			Identifier for the value desired.
+
+		OFFSET [8 bytes]
+
+			Unsigned integer used to indicate the seek offset, in
+			bytes, for the desired value.
+
+		LENGTH [8 bytes]
+
+			Unsigned integer used to indicate the length, in bytes,
+			of the desired value after OFFSET is taken into account.
+			A LENGTH of zero represents an undefined length, meaning
+			the entire value after OFFSET should be given.
+
+	The FIND_VALUE message payload is 80 bytes in size.
+
+11. ERROR message format
+
+	An ERROR message can be sent in response to any message except an ERROR
+	message. Returning an error message is preferred to dropping the request
+	because it still indicates the node is alive.
+
+	Format:
+
+		LENGTH [1 byte]
+
+			Length of ERROR_MSG as an unsigned integer. LENGTH must
+			be nonzero.
+
+		ERROR_MSG [LENGTH bytes]
+
+			The error value.
+
+	The ERROR message payload is between 2 bytes and 257 bytes in size.
