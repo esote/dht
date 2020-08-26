@@ -18,7 +18,9 @@
 		optional for TCP data streams to use their own padding).
 	TODO: encrypt UDP messages using public key -- for bootstrapping the X
 		must be unencrypted in ping messages, so nodes can verify the
-		node ID has completed the crypto puzzles.
+		node ID has completed the crypto puzzles. (requires converting
+		the ed25519 keys to curve25519 keys for elliptic curve diffie
+		hellman)
 	TODO: encrypt TCP messages by generating a 256-bit key, encrypting the
 		key with the public key, then using chacha20-poly1305 with the
 		256-bit key to encrypt the data stream.
