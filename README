@@ -1,0 +1,2 @@
+exp/x25519 is for experimenting with using Curve25519-based ECDH encrypted
+messages & hiding metadata in a revision PROTOCOL-v2 (becoming -v3).
