@@ -15,7 +15,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(hex.EncodeToString(Ed25519ToCurve25519(publ)))
+	fmt.Println(hex.EncodeToString(PublEd25519ToX25519(publ)))
 }
 
 // Prime p 2^255 - 19
@@ -24,12 +24,15 @@ func main() {
 // https://cr.yp.to/ecdh/curve25519-20060209.pdf.
 var curve25519P, _ = new(big.Int).SetString("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffed", 16)
 
-// Convert Ed25519 public keys to Curve25519 keys. Converts the y-coordinate of
-// a twisted Edwards curve to the u-coordinate of a Montgomery curve.
+// Convert an Ed25519 public key to a X25519 key. Converts the y-coordinate
+// of a twisted Edwards curve to the u-coordinate of a Montgomery curve.
 //
 // The Ed25519 public key is assumed to be encoded according to RFC 8032, as
 // used in golang.org/crypto/ed25519.
-func Ed25519ToCurve25519(publ ed25519.PublicKey) []byte {
+//
+// TODO: compare to libsodium, ensure we get the same results
+// TODO: libsodium does various checks on the public key prior to converting
+func PublEd25519ToX25519(publ ed25519.PublicKey) []byte {
 	if len(publ) != ed25519.PublicKeySize {
 		panic("bad ed25519 public key length")
 	}
@@ -44,7 +47,7 @@ func Ed25519ToCurve25519(publ ed25519.PublicKey) []byte {
 	/*
 		u = (1 + y) / (1 - y)
 
-		Source: Twisted Edwards Curves, Theorem 2.3
+		Source: Twisted Edwards Curves, Theorem 3.2
 		https://eprint.iacr.org/2008/013.pdf
 
 		Mod{Inverse} to keep within the prime field.
