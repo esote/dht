@@ -3,6 +3,8 @@ package x25519
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha512"
+	"errors"
 	"math/big"
 
 	"golang.org/x/crypto/curve25519"
@@ -34,9 +36,9 @@ var curve25519P, _ = new(big.Int).SetString("7ffffffffffffffffffffffffffffffffff
 //
 // TODO: compare to libsodium, ensure we get the same results
 // TODO: libsodium does various checks on the public key prior to converting
-func PublEd25519ToX25519(publ ed25519.PublicKey) []byte {
+func PublEd25519ToX25519(publ ed25519.PublicKey) ([]byte, error) {
 	if len(publ) != ed25519.PublicKeySize {
-		panic("bad ed25519 public key length")
+		return nil, errors.New("bad publ length")
 	}
 
 	// publ is little endian, SetBytes takes big endian
@@ -44,7 +46,7 @@ func PublEd25519ToX25519(publ ed25519.PublicKey) []byte {
 	swapEndian(Y, publ)
 
 	// Clear sign bit from x-coodinate (RFC 8032, section 3.1).
-	Y[0] &= 0b0111_111
+	Y[0] &= 0b0111_1111
 
 	/*
 		u = (1 + y) / (1 - y)
@@ -67,7 +69,30 @@ func PublEd25519ToX25519(publ ed25519.PublicKey) []byte {
 		panic("u coordinate not constrainted to prime field")
 	}
 	swapEndian(U, ub)
-	return U
+	return U, nil
+}
+
+// Convert an Ed25519 private key to a X25519 key.
+//
+// The Ed25519 private key is assumed to be encoded as used in
+// golang.org/crypto/ed25519 with the public key as a suffix to the "seed".
+func PrivEd25519ToX25519(priv ed25519.PrivateKey) ([]byte, error) {
+	if len(priv) != ed25519.PrivateKeySize {
+		return nil, errors.New("bad priv length")
+	}
+	// Source: RFC 8032, section 5.1.5
+	var buf [sha512.Size]byte
+	h := sha512.New()
+	if _, err := h.Write(priv.Seed()); err != nil {
+		return nil, err
+	}
+	h.Sum(buf[:0])
+	x := make([]byte, curve25519.ScalarSize)
+	copy(x, buf[:])
+	x[0] &= 0b1111_1000
+	x[31] &= 0b0111_1111
+	x[31] |= 0b0100_0000
+	return x, nil
 }
 
 // Swap endianness of src into dst, assumes len(dst) >= len(src).

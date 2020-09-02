@@ -17,6 +17,6 @@ func TestFixed(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(dec) != s {
-		t.Fatal("dec(enc(s)) != s")
+		t.Fatalf("want %s, have %s", s, string(dec))
 	}
 }

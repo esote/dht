@@ -14,7 +14,7 @@ func TestStream(t *testing.T) {
 	}
 	const s = "1234567890"
 	sizes := []int{
-		2,      // under n%len(s) == 0
+		2,      // under, n%len(s) == 0
 		3,      // under, n%len(s) != 0
 		len(s), // exact
 		15,     // over

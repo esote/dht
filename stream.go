@@ -80,7 +80,7 @@ func NewWriter(w io.Writer, publ []byte, bufsiz int) (io.WriteCloser, error) {
 		nonce:  make([]byte, aead.NonceSize()),
 	}
 	sw.buf = sw.encBuf[:bufsiz]
-	if len(sw.nonce) < int(unsafe.Sizeof(sw.counter)*2) {
+	if len(sw.nonce) < int(unsafe.Sizeof(sw.counter))*2 {
 		return nil, errors.New("aead nonce cannot safely hold counter")
 	}
 	cind := len(sw.nonce) - int(unsafe.Sizeof(sw.counter))
