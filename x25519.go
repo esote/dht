@@ -1,21 +1,23 @@
-package main
+package x25519
 
 import (
 	"crypto/ed25519"
-	"encoding/hex"
-	"fmt"
-	"log"
+	"crypto/rand"
 	"math/big"
 
 	"golang.org/x/crypto/curve25519"
 )
 
-func main() {
-	publ, _, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		log.Fatal(err)
+func NewKeypair() ([]byte, []byte, error) {
+	priv := make([]byte, curve25519.ScalarSize)
+	if _, err := rand.Read(priv); err != nil {
+		return nil, nil, err
 	}
-	fmt.Println(hex.EncodeToString(PublEd25519ToX25519(publ)))
+	publ, err := curve25519.X25519(priv, curve25519.Basepoint)
+	if err != nil {
+		return nil, nil, err
+	}
+	return publ, priv, nil
 }
 
 // Prime p 2^255 - 19

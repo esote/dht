@@ -1,10 +1,8 @@
-package main
+package x25519
 
-import (
-	"testing"
-)
+import "testing"
 
-func Test(t *testing.T) {
+func TestFixed(t *testing.T) {
 	publ, priv, err := NewKeypair()
 	if err != nil {
 		t.Fatal(err)

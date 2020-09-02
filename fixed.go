@@ -1,4 +1,4 @@
-package main
+package x25519
 
 import (
 	"crypto/rand"
@@ -9,18 +9,17 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/curve25519"
 	"golang.org/x/crypto/hkdf"
+	"golang.org/x/crypto/poly1305"
 )
 
-func NewKeypair() ([]byte, []byte, error) {
-	priv := make([]byte, curve25519.ScalarSize)
-	if _, err := rand.Read(priv); err != nil {
-		return nil, nil, err
-	}
-	publ, err := curve25519.X25519(priv, curve25519.Basepoint)
-	if err != nil {
-		return nil, nil, err
-	}
-	return publ, priv, nil
+const (
+	nonceSize    = chacha20poly1305.NonceSizeX
+	overheadSize = poly1305.TagSize
+)
+
+func FixedLength(l int) int {
+	return l + curve25519.ScalarSize + sha512.Size + nonceSize +
+		overheadSize
 }
 
 func EncryptFixed(plaintext, publ []byte) ([]byte, error) {
@@ -95,6 +94,7 @@ func DecryptFixed(ciphertext, priv []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	// TODO: len(ciphertext) enough for nonce
 	nonce := ciphertext[:aead.NonceSize()]
 	ciphertext = ciphertext[aead.NonceSize():]
 	out := make([]byte, len(ciphertext)-aead.Overhead())
