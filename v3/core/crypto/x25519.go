@@ -1,4 +1,4 @@
-package x25519
+package crypto
 
 import (
 	"crypto/ed25519"
@@ -10,7 +10,7 @@ import (
 	"golang.org/x/crypto/curve25519"
 )
 
-func NewKeypair() ([]byte, []byte, error) {
+func newX25519Keypair() ([]byte, []byte, error) {
 	priv := make([]byte, curve25519.ScalarSize)
 	if _, err := rand.Read(priv); err != nil {
 		return nil, nil, err

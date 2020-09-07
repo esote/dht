@@ -1,9 +1,9 @@
-package x25519
+package crypto
 
 import "testing"
 
 func TestFixed(t *testing.T) {
-	publ, priv, err := NewKeypair()
+	publ, priv, err := newX25519Keypair()
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,4 +1,4 @@
-package x25519
+package crypto
 
 import (
 	"bytes"
@@ -8,7 +8,7 @@ import (
 
 func TestStream(t *testing.T) {
 	var b bytes.Buffer
-	publ, priv, err := NewKeypair()
+	publ, priv, err := newX25519Keypair()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,6 +34,7 @@ func TestStream(t *testing.T) {
 		if err = wc.Close(); err != nil {
 			t.Fatal(err)
 		}
+		// TODO: test with reader returning smaller / partial amounts
 		r, err := NewReader(&b, priv, bufsiz)
 		if err != nil {
 			t.Fatal(err)

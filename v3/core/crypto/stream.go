@@ -1,4 +1,4 @@
-package x25519
+package crypto
 
 import (
 	"crypto/cipher"
@@ -45,7 +45,7 @@ func NewWriter(w io.Writer, publ []byte, bufsiz int) (io.WriteCloser, error) {
 	if len(publ) != curve25519.ScalarSize {
 		return nil, errors.New("bad publ length")
 	}
-	ePubl, ePriv, err := NewKeypair()
+	ePubl, ePriv, err := newX25519Keypair()
 	if err != nil {
 		return nil, err
 	}
@@ -203,6 +203,8 @@ func (r *reader) Read(p []byte) (n int, err error) {
 		r.err = errors.New("negative read from src")
 		return n, r.err
 	}
+	// XXX: buffer ciphertext, error below only if we got EOF rather than
+	// also when we get under-read
 	if r.cn < r.aead.NonceSize() {
 		r.err = io.ErrUnexpectedEOF
 		return n, r.err
