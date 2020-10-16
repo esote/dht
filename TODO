@@ -8,8 +8,6 @@ Review papers listed in PAPERS.
 
 Unit tests & benchmarks.
 
-File-based Storer.
-
 Add README
 
 Rewrite PROTOCOL using nroff, which can convert to an IETF-style document for
