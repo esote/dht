@@ -1,20 +1,38 @@
 package dht
 
 import (
-	"bytes"
-	"database/sql"
 	"errors"
 	"io"
-	"math"
-	"net/url"
-	"sync"
+	"os"
+	"path/filepath"
 
-	"github.com/esote/dht/core"
 	"github.com/esote/dht/util"
-
-	// SQLite3 driver.
-	_ "github.com/mattn/go-sqlite3"
+	"github.com/esote/util/splay"
 )
+
+// Storer stores key-value pairs. Storer is safe for concurrent use.
+type Storer interface {
+	// Load a value. Returns the value and its length.
+	//
+	// If the value does not exist, Load returns ErrStorerNotExist.
+	Load(key KeyID) (value io.ReadCloser, length uint64, err error)
+
+	// Store a value. If value is nil, Store is used only to check if the
+	// value could be stored.
+	//
+	// If the value is too large to be supported, or the total storage
+	// capacity has been reached, Store returns ErrStorerLarge. If the
+	// storer's quota of key-value pairs has been reached, Storer returns
+	// ErrStorerQuota. If the value is already stored, Store returns
+	// ErrStorerExist.
+	Store(key KeyID, length uint64, value io.Reader) error
+
+	// Delete a value. If the value does not exist, Delete returns
+	// ErrStorerNotExist.
+	Delete(key KeyID) error
+
+	io.Closer
+}
 
 // Errors which may be returned by a Storer.
 var (
@@ -24,187 +42,99 @@ var (
 	ErrStorerNotExist = errors.New("storer: value does not exist") // ENOENT
 )
 
-// Storer stores key-value pairs. Storer is safe for concurrent use.
-type Storer interface {
-	// Load a value at a certain seek offset and length. Returns the value
-	// and its real length.
-	//
-	// If the returned value satisfies io.Closer, it will be closed by the
-	// DHT. If input length is zero, return the rest of the value.
-	//
-	// If the value does not exist, Load returns ErrStorerNotExist.
-	Load(key *core.ID, offset, length uint64) (io.Reader, uint64, error)
-
-	// Store a value.
-	//
-	// If the value is too large to be supported, or the total storage
-	// capacity has been reached, Store returns ErrStorerLarge. If the
-	// storer's quota of key-value pairs has been reached, Storer returns
-	// ErrStorerQuota. If the value is already stored, Store returns
-	// ErrStorerExist.
-	Store(key *core.ID, length uint64, value io.Reader) error
-
-	// Delete a value. If the value does not exist, Delete returns
-	// ErrStorerNotExist.
-	Delete(key *core.ID) error
+type fileStorer struct {
+	s            *splay.Splay
+	dir          string
+	maxLength    uint64
+	maxTotalSize uint64
 }
 
-// TODO: file storer
-
-type sqlite3 struct {
-	db *sql.DB
-
-	msize  uint64
-	mcount uint64
-}
-
-var _ Storer = &sqlite3{}
-
-// NewSqlite3Storer creates a Storer which places key-value pairs into a SQLite3
-// database.
-func NewSqlite3Storer(file string, maxSize, maxCount uint64) (Storer, error) {
-	u := &url.URL{
-		Scheme: "file",
-		Opaque: file,
-	}
-	query := u.Query()
-	query.Set("_secure_delete", "on")
-	u.RawQuery = query.Encode()
-	db, err := sql.Open("sqlite3", u.String())
-	// TODO: create table
+func NewFileStorer(dir string, maxLength, maxTotalSize uint64) (Storer, error) {
+	dir = filepath.Clean(dir)
+	s, err := splay.NewSplay(dir, 4)
 	if err != nil {
 		return nil, err
 	}
-	return &sqlite3{
-		db: db,
+	return &fileStorer{
+		s:            s,
+		dir:          dir,
+		maxLength:    maxLength,
+		maxTotalSize: maxTotalSize,
 	}, nil
 }
 
-func (s *sqlite3) Load(key *core.ID, offset, length uint64) (io.Reader, uint64, error) {
-	if offset == math.MaxUint64 {
-		return nil, 0, errors.New("offset too big for sqlite3 storer")
+func (s *fileStorer) Load(key KeyID) (io.ReadCloser, uint64, error) {
+	file, err := s.s.Open(string(key))
+	if err == os.ErrNotExist {
+		err = ErrStorerNotExist
 	}
-	const qSelect = `SELECT SUBSTR(value, ?, ?) FROM st WHERE key = ?`
-	var value []byte
-	var row *sql.Row
-	if length == 0 {
-		row = s.db.QueryRow(qSelect, offset+1, -1, key[:])
-	} else {
-		row = s.db.QueryRow(qSelect, offset+1, length, key[:])
-	}
-	if err := row.Scan(&value); err == sql.ErrNoRows {
-		return nil, 0, ErrStorerNotExist
-	} else if err != nil {
+	if err != nil {
 		return nil, 0, err
 	}
-	return bytes.NewReader(value), uint64(len(value)), nil
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, 0, err
+	}
+	return file, uint64(info.Size()), nil
 }
 
-func (s *sqlite3) Store(key *core.ID, length uint64, value io.Reader) error {
-	if length > s.msize {
+func (s *fileStorer) Store(key KeyID, length uint64, value io.Reader) error {
+	if length > s.maxLength {
 		return ErrStorerLarge
 	}
-	return util.Transact(s.db, func(tx *sql.Tx) error {
-		const qCount = "SELECT COUNT(key) FROM st"
-		const qInsert = "INSERT INTO st(key, value) VALUES (?, ?)"
-		var count uint64
-		if err := tx.QueryRow(qCount).Scan(&count); err != nil {
-			return err
-		}
-		if count >= s.mcount {
-			return ErrStorerQuota
-		}
-		// XXX: It would be nice if we didn't have to read the entire
-		// value into memory. Does sqlite & mattn's sqlite driver
-		// support io.Reader-fed values to gradually buffer data into
-		// the database, rather than all from memory. Otherwise it's
-		// possible to add hack of buffering by appending to the value
-		// in the database.
-		var b bytes.Buffer
-		if _, err := util.CopyN(&b, value, length); err != nil {
-			return err
-		}
-		_, err := tx.Exec(qInsert, key[:], b.Bytes())
-		// TODO: ErrStorerExist, when err gives unique primary key error
+	size, err := s.size()
+	if err != nil {
 		return err
-	})
-}
-func (s *sqlite3) Delete(key *core.ID) error {
-	const qDelete = "DELETE FROM st WHERE key = ?"
-	_, err := s.db.Exec(qDelete, key[:])
+	}
+	if uint64(size)+length > s.maxTotalSize {
+		return ErrStorerLarge
+	}
+	if value == nil {
+		_, err = s.s.Stat(string(key))
+		switch {
+		case err == nil:
+			return ErrStorerExist
+		case os.IsNotExist(err):
+			return nil
+		default:
+			return err
+		}
+	}
+	file, err := s.s.OpenFile(string(key),
+		os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	// TODO: check EDQUOT
+	if err == os.ErrExist {
+		err = ErrStorerExist
+	}
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = util.CopyN(file, value, length)
+	// TODO: check EDQUOT
 	return err
 }
 
-type mem struct {
-	data  map[core.ID][]byte
-	total uint64
-
-	mu sync.Mutex
-
-	msize  uint64
-	mcount uint64
+func (s *fileStorer) Delete(key KeyID) error {
+	err := s.s.Remove(string(key))
+	if err == os.ErrNotExist {
+		err = ErrStorerNotExist
+	}
+	return err
 }
 
-var _ Storer = &mem{}
-
-// NewMemoryStorer creates a storer which places key-value pairs in memory.
-func NewMemoryStorer(maxSize, maxCount uint64) Storer {
-	return &mem{
-		data:   make(map[core.ID][]byte),
-		msize:  maxSize,
-		mcount: maxCount,
-	}
+func (s *fileStorer) Close() error {
+	return nil
 }
 
-func (s *mem) Load(key *core.ID, offset, length uint64) (io.Reader, uint64, error) {
-	if key == nil {
-		return nil, 0, errors.New("key is nil")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	v, ok := s.data[*key]
-	if !ok {
-		return nil, 0, ErrStorerNotExist
-	}
-	if length == 0 || length > uint64(len(v)) {
-		length = uint64(len(v))
-	}
-	return bytes.NewReader(v[:length]), length, nil
-}
-
-func (s *mem) Store(key *core.ID, length uint64, value io.Reader) error {
-	if key == nil {
-		return errors.New("key is nil")
-	}
-	if _, ok := s.data[*key]; ok {
-		return ErrStorerExist
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.total+length > s.msize {
-		return ErrStorerLarge
-	}
-	if uint64(len(s.data))+1 > s.mcount {
-		return ErrStorerQuota
-	}
-	var b bytes.Buffer
-	if _, err := util.CopyN(&b, value, length); err != nil {
+func (s *fileStorer) size() (uint64, error) {
+	var size uint64
+	err := filepath.Walk(s.dir, func(_ string, info os.FileInfo, err error) error {
+		if err == nil && info.Mode().IsRegular() {
+			size += uint64(info.Size())
+		}
 		return err
-	}
-	s.total += length
-	s.data[*key] = b.Bytes()
-	return nil
-}
-
-func (s *mem) Delete(key *core.ID) error {
-	if key == nil {
-		return errors.New("key is nil")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.data[*key]; !ok {
-		return ErrStorerNotExist
-	}
-	delete(s.data, *key)
-	return nil
+	})
+	return size, err
 }

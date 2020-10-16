@@ -1,8 +1,8 @@
-package dht
+package core
 
 import (
 	"crypto/ed25519"
-	cryptorand "crypto/rand"
+	"crypto/rand"
 	"crypto/sha512"
 	"math/bits"
 
@@ -10,13 +10,14 @@ import (
 )
 
 const (
-	c1 = 26
-	c2 = 28
+	c1 = 23
+	c2 = 24
 )
 
 func NewNodeID() (publ ed25519.PublicKey, priv ed25519.PrivateKey, x []byte, err error) {
 	h := sha512.New()
 	p := make([]byte, h.Size())
+	// Static puzzle
 	for {
 		publ, priv, err = ed25519.GenerateKey(nil)
 		if err != nil {
@@ -42,8 +43,9 @@ func NewNodeID() (publ ed25519.PublicKey, priv ed25519.PrivateKey, x []byte, err
 	p = h.Sum(p[:0])
 	x = make([]byte, h.Size())
 	p2 := make([]byte, h.Size())
+	// Dynamic puzzle
 	for {
-		if _, err = cryptorand.Read(x); err != nil {
+		if _, err = rand.Read(x); err != nil {
 			return
 		}
 		xor(p2, p, x)
@@ -63,6 +65,7 @@ func VerifyNodeID(publ ed25519.PublicKey, x []byte) bool {
 	if len(publ) != ed25519.PublicKeySize {
 		return false
 	}
+	// Static puzzle
 	h := sha512.New()
 	if _, err := h.Write(publ); err != nil {
 		return false
@@ -75,6 +78,7 @@ func VerifyNodeID(publ ed25519.PublicKey, x []byte) bool {
 	if p = h.Sum(p[:0]); leadingZeros(p) != c1 {
 		return false
 	}
+	// Dynamic Puzzle
 	h = sha3.New512()
 	if len(x) != h.Size() {
 		return false

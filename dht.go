@@ -1,326 +1,343 @@
-// Package dht is an experiment to write a distributed hash table following the
-// Kademlia paper
-// https://pdos.csail.mit.edu/~petar/papers/maymounkov-kademlia-lncs.pdf.
 package dht
 
 import (
+	"encoding/binary"
 	"errors"
-	"io"
+	"io/ioutil"
+	"math/bits"
 	"net"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/esote/dht/core"
-	"github.com/esote/dht/util"
+	"github.com/esote/dht/session"
 )
 
-const (
-	// NetworkIdentity is the IDENT header value used to identify this
-	// specific implementation of PROTOCOL.
-	NetworkIdentity = "dht-esote-v1"
+type NodeID []byte
 
-	// K is the count of nodes in a given K bucket, as used by DHT.
-	K = 20
+const NodeIDSize = core.NodeIDSize
 
-	// FindNodeMaxCount places a limit on the maximum nodes to query when
-	// the DHT receives a FIND_NODES request.
-	FindNodeMaxCount = K
-
-	Alpha = 3
-)
-
-func init() {
-	// Ensure NetworkIdentity's length won't overflow IDENT_LEN.
-	if len(NetworkIdentity) > int(^uint8(0)) {
-		panic("network identity too large")
+func (x NodeID) LCP(y NodeID) int {
+	for i := 0; i < NodeIDSize; i++ {
+		if b := x[i] ^ y[i]; b != 0 {
+			return i*8 + bits.LeadingZeros8(b)
+		}
 	}
+	return NodeIDSize * 8
 }
 
-// DHT is a distributed hash table as defined in the Kademlia paper. DHT is safe
-// to use concurrently.
-type DHT struct {
-	rtable  RTable
-	storer  Storer
-	network Network
+type KeyID []byte
 
-	self *core.Node
+const KeyIDSize = core.KeySize
 
-	cfg *Config
-
-	wg   sync.WaitGroup
-	quit chan struct{}
+type Node struct {
+	ID   NodeID
+	IP   net.IP
+	Port uint16
 }
 
-// Config is used to configure DHT in NewDHT.
-type Config struct {
-	NewID   bool
-	Workers int
-	// TODO: logger interface to pass nonfatal errors.
-	// TODO: bootstrap nodes
-}
+const NodeSize = core.NodeTripleSize
 
-// NewDHT constructs a SQLite3-backed DHT using a given storer and network.
-func NewDHT(dir string, storer Storer, network Network, cfg *Config) (*DHT, error) {
-	if storer == nil {
-		return nil, errors.New("dht: storer is nil")
+func (n *Node) MarshalBinary() ([]byte, error) {
+	data := make([]byte, NodeSize)
+	b := data
+
+	if len(n.ID) != core.NodeIDSize {
+		return nil, errors.New("node ID length invalid")
 	}
-	if network == nil {
-		return nil, errors.New("dht: network is nil")
-	}
-	if cfg == nil {
-		cfg = &Config{
-			NewID:   false,
-			Workers: 5,
-		}
-	} else if cfg.Workers <= 0 {
-		return nil, errors.New("dht: must have at least one worker")
-	}
-	var self core.ID
-	if cfg.NewID {
-		f, err := os.OpenFile(filepath.Join(dir, "self"),
-			os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-		if err != nil {
-			return nil, err
-		}
-		defer f.Close()
-		self, err = core.NewID()
-		if err != nil {
-			return nil, err
-		}
-		if _, err = f.Write(self[:]); err != nil {
-			return nil, err
-		}
-	} else {
-		f, err := os.Open(filepath.Join(dir, "self"))
-		if err != nil {
-			return nil, err
-		}
-		defer f.Close()
-		if _, err = f.Read(self[:]); err != nil {
-			return nil, err
-		}
-	}
-	host, port, err := net.SplitHostPort(network.Addr().String())
-	if err != nil {
-		return nil, err
-	}
-	ip := net.ParseIP(host)
+	copy(b, n.ID)
+	b = b[core.NodeIDSize:]
+
+	ip := n.IP.To16()
 	if ip == nil {
-		return nil, errors.New("dht: network address is not an IP")
+		return nil, errors.New("nod IP invalid")
 	}
-	if ip = ip.To16(); ip == nil {
-		return nil, errors.New("dht: network IP is malformed")
-	}
-	nport, err := strconv.ParseUint(port, 10, 16)
-	if err != nil {
-		return nil, err
-	}
-	dht := &DHT{
-		storer:  storer,
-		network: network,
-		self: &core.Node{
-			ID:   self,
-			Port: uint16(nport),
-			IP:   ip,
-		},
-		cfg:  cfg,
-		quit: make(chan struct{}, cfg.Workers),
-	}
-	rt, err := NewSqlite3RTable(&self, K, dir, dht.ping)
-	if err != nil {
-		_ = dht.Close()
-		return nil, err
-	}
-	dht.rtable = rt
-	dht.wg.Add(cfg.Workers)
-	for i := 0; i < cfg.Workers; i++ {
-		go dht.listen()
-	}
-	return dht, nil
+	copy(b, ip)
+	b = b[net.IPv6len:]
+
+	binary.BigEndian.PutUint16(b, n.Port)
+	b = b[2:]
+
+	return data, nil
 }
 
-// Load a value based on a key.
-func (dht *DHT) Load(key *core.ID) (io.Reader, error) {
-	// TODO: concurrently call FIND_VALUE
+func (n *Node) UnmarshalBinary(data []byte) error {
+	if len(data) < NodeSize {
+		return errors.New("node truncated")
+	}
 
-	nodes, err := dht.rtable.Closest(key, K)
-	if err != nil {
-		return nil, err
-	}
-	start := make([]interface{}, len(nodes))
-	for i := range nodes {
-		start[i] = nodes[i]
-	}
-	cfg := &util.FindConfig{
-		Start:   start,
-		Target:  key,
-		Workers: Alpha,
-		Max:     K,
-		Cmp: func(a, b interface{}) int {
-			// TODO: handle a is node / id, b = node / id, grab id from
-			// node
-			return 0
-		},
-		Query: func(x interface{}) []interface{} {
-			// TODO
-			return nil
-		},
-	}
-	f, err := util.Find(cfg)
-	if err != nil {
-		return nil, err
-	}
-	timer := time.NewTimer(30 * time.Second) // TODO: func LoadContext?
-	select {
-	case found := <-f.Done:
-		_ = found
-	case <-timer.C:
-		f.Close()
-		return nil, errors.New("value not found, time limit exceeded")
-	}
-	return nil, nil
-}
+	n.ID = make([]byte, core.NodeIDSize)
+	copy(n.ID, data)
+	data = data[core.NodeIDSize:]
 
-// Store a key-value pair on the network (either locally or distributed).
-func (dht *DHT) Store(key *core.ID, value io.Reader) error {
-	// TODO: call STORE on self, and on some other nodes.
+	n.IP = make([]byte, net.IPv6len)
+	copy(n.IP, data)
+	data = data[net.IPv6len:]
+
+	n.Port = binary.BigEndian.Uint16(data)
+	data = data[2:]
+
 	return nil
 }
 
-// Close the DHT.
+// TODO: unexport
+const (
+	K            = 20
+	MaxSessions  = 4096 // max active sessions
+	MaxListeners = 2    // listen to UDP and TCP at the same time
+)
+
+const (
+	open int32 = iota
+	closed
+)
+
+type DHT struct {
+	storer Storer
+	rtable RTable
+	sman   *session.Manager
+
+	timeout time.Duration
+
+	publ []byte
+	priv []byte
+	x    []byte
+	ip   net.IP
+	port uint16
+
+	handlers  sync.WaitGroup
+	listeners sync.WaitGroup
+
+	tcp *net.TCPListener
+	udp *net.UDPConn
+
+	done  chan struct{}
+	state int32 // atomic int used to close handlers
+}
+
+type DHTConfig struct {
+	Dir      string
+	Password []byte
+	Storer   Storer
+	Boostrap []*Node
+	IP       net.IP
+	Port     uint16
+	Timeout  time.Duration
+}
+
+// TODO: when returning an error it should try to close as much as possible
+func NewDHT(config *DHTConfig) (*DHT, error) {
+	if config == nil {
+		return nil, errors.New("dht: config is nil")
+	}
+	config.Dir = filepath.Clean(config.Dir)
+	info, err := os.Stat(config.Dir)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, errors.New("dht: config.Dir is not a directory")
+	}
+	publ, priv, x, err := readKeypair(config.Dir, config.Password)
+	if err != nil && os.IsNotExist(err) {
+		publ, priv, x, err = createKeypair(config.Dir, config.Password)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if ip := config.IP.To4(); ip != nil {
+		config.IP = ip
+	} else if ip := config.IP.To16(); ip != nil {
+		config.IP = ip
+	} else {
+		return nil, errors.New("dht: config.IP invalid")
+	}
+	dht := &DHT{
+		storer:  config.Storer,
+		timeout: config.Timeout,
+		publ:    publ,
+		priv:    priv,
+		x:       x,
+		ip:      config.IP,
+		port:    config.Port,
+		done:    make(chan struct{}, MaxSessions+MaxListeners),
+		state:   open,
+	}
+	dht.rtable, err = NewRTable(publ, K, config.Dir)
+	if err != nil {
+		return nil, err
+	}
+	dht.sman = session.NewManager(MaxSessions, dht.handlerFunc)
+	dht.tcp, err = net.ListenTCP("tcp", &net.TCPAddr{
+		Port: int(config.Port),
+	})
+	if err != nil {
+		return nil, err
+	}
+	dht.listeners.Add(1)
+	go dht.listenTCP()
+	dht.udp, err = net.ListenUDP("udp", &net.UDPAddr{
+		Port: int(config.Port),
+	})
+	if err != nil {
+		return nil, err
+	}
+	dht.listeners.Add(1)
+	go dht.listenUDP()
+	return dht, nil
+}
+
 func (dht *DHT) Close() error {
+	if !atomic.CompareAndSwapInt32(&dht.state, open, closed) {
+		return nil // TODO: err
+	}
+	for i := 0; i < cap(dht.done); i++ {
+		dht.done <- struct{}{}
+	}
+	dht.handlers.Wait()
+	dht.listeners.Wait()
+	close(dht.done)
 	var err error
-	if dht.rtable != nil {
-		err = dht.rtable.Close()
+	if err2 := dht.tcp.Close(); err == nil {
+		err = err2
 	}
-	for i := 0; i < dht.cfg.Workers; i++ {
-		dht.quit <- struct{}{}
+	if err2 := dht.udp.Close(); err == nil {
+		err = err2
 	}
-	dht.wg.Wait()
-	close(dht.quit)
+	if err2 := dht.sman.Close(); err == nil {
+		err = err2
+	}
+	if err2 := dht.rtable.Close(); err == nil {
+		err = err2
+	}
 	return err
 }
 
-func (dht *DHT) listen() {
-	defer dht.wg.Done()
+/*
+// TODO: return error, rather than bool
+func (dht *DHT) ping(n *Node) bool {
+	rpcid := make([]byte, core.RPCIDSize)
+	if _, err := rand.Read(rpcid); err != nil {
+		return false
+	}
+	req := core.Message{
+		Version:  core.Version,
+		BodyKind: core.KindFixed,
+		Hdr: &core.Header{
+			MsgType:  core.TypePing,
+			NodeID:   dht.publ,
+			PuzDynX:  dht.x,
+			NodeIP:   dht.ip,
+			NodePort: dht.port,
+			RPCID:    rpcid,
+			Time:     uint64(time.Now().Add(dht.timeout).Unix()),
+		},
+		Payload: &core.PingPayload{},
+	}
+	_ = req
+	// TODO: send req to session manager, wait for response
+	var resp core.Message
+	_ = resp
+	return true
+}
+*/
+
+func (dht *DHT) listenUDP() {
+	defer dht.listeners.Done()
+	buf := make([]byte, core.FixedMessageSize)
 	for {
+		// TODO: is this wanted?
+		if err := dht.udp.SetDeadline(time.Now().Add(dht.timeout)); err != nil {
+			return
+		}
 		select {
-		case <-dht.quit:
+		case <-dht.done:
 			return
 		default:
 		}
-		conn, err := dht.network.Accept()
-		if err != nil { // TODO: log?
+		n, addr, err := dht.udp.ReadFrom(buf)
+		if err != nil {
+			// TODO log
 			continue
 		}
-		_ = dht.receive(conn) // TODO: log?
+		var msg core.Message
+		if err = msg.UnmarshalFixed(buf[:n], dht.priv); err != nil {
+			// TODO log
+			continue
+		}
+		// XXX: verify remote addr matches msg addr
+		_ = addr
+		if err = dht.sman.Enqueue(&msg); err != nil {
+			// TODO log
+			continue
+		}
 	}
 }
 
-func (dht *DHT) receive(conn net.Conn) (err error) {
-	defer conn.Close()
-	req, err := core.NewMessage(conn)
+func (dht *DHT) listenTCP() {
+	defer dht.listeners.Done()
+	for {
+		// TODO: is this wanted?
+		if err := dht.tcp.SetDeadline(time.Now().Add(dht.timeout)); err != nil {
+			return
+		}
+		select {
+		case <-dht.done:
+			return
+		default:
+		}
+		conn, err := dht.tcp.Accept()
+		if err != nil {
+			continue
+		}
+		if err = conn.SetDeadline(time.Now().Add(dht.timeout)); err != nil {
+			continue
+		}
+		var msg core.Message
+		if err = msg.UnmarshalStream(conn, dht.priv); err != nil {
+			continue
+		}
+		// XXX: verify remote addr matches msg addr
+		if err = dht.sman.Enqueue(&msg); err != nil {
+			continue
+		}
+		// XXX: close conn in dht handler or include io.Closer
+		// when unmarshalling stream msg & leave for consumer to handler
+		// (would still need to close on error)
+	}
+}
+
+func readKeypair(dir string, pass []byte) (publ, priv, x []byte, err error) {
+	publ, err = ioutil.ReadFile(filepath.Join(dir, "publ"))
 	if err != nil {
 		return
 	}
-	if err = dht.rtable.Store(req.Hdr.Node); err != nil {
+	// XXX: decrypt
+	priv, err = ioutil.ReadFile(filepath.Join(dir, "priv"))
+	if err != nil {
 		return
 	}
-	resp := &core.Message{
-		Hdr: dht.baseHeader(),
-	}
-	resp.Hdr.RPCID = req.Hdr.RPCID
-	switch v := req.Payload.(type) {
-	case *core.Ping:
-		resp.Payload = &core.Ping{}
-	case *core.Store:
-		if err = dht.storer.Store(&v.Key, v.Length, v.Value); err != nil {
-			resp.Payload = core.NewErrorStr("Store value failed")
-		}
-		return nil
-	case *core.FindNode:
-		if v.Count > FindNodeMaxCount {
-			v.Count = FindNodeMaxCount
-		}
-		nodes, err := dht.rtable.Closest(&v.Target, int(v.Count))
-		if err != nil {
-			resp.Payload = core.NewErrorStr("Finding nodes failed")
-			break
-		}
-		resp.Payload = &core.FindNodeResp{
-			Nodes: nodes,
-		}
-	case *core.FindNodeResp:
-		return errors.New("dht: unexpected FIND_NODE_RESP")
-	case *core.FindValue:
-		value, length, err := dht.storer.Load(&v.Key, v.Offset, v.Length)
-		if err == ErrStorerNotExist {
-			length = 0
-		} else if err != nil {
-			resp.Payload = core.NewErrorStr("Load value failed")
-			break
-		}
-		if c, ok := value.(io.Closer); ok {
-			defer c.Close()
-		}
-		resp.Payload = &core.FindValueResp{
-			Length: length,
-			Value:  value,
-		}
-	case *core.FindValueResp:
-		return errors.New("dht: unexpected FIND_VALUE_RESP")
-	case *core.Error:
-		return errors.New("dht: unexpected ERROR")
-	default:
-		return errors.New("dht: payload type invalid")
-	}
-	resp.Hdr.Type = resp.Payload.Type()
-	return resp.Encode(conn)
-}
-
-func (dht *DHT) baseHeader() *core.Header {
-	return &core.Header{
-		Magic:          core.Magic,
-		IdentityLength: uint8(len(NetworkIdentity)),
-		Identity:       []byte(NetworkIdentity),
-		Node:           dht.self,
-	}
-}
-
-func (dht *DHT) ping(n *core.Node) (ok bool) {
-	defer func() {
-		if recover() != nil {
-			ok = false
-		}
-	}()
-	ok = dht.pingInner(n)
+	x, err = ioutil.ReadFile(filepath.Join(dir, "x"))
 	return
 }
 
-func (dht *DHT) pingInner(n *core.Node) bool {
-	port := strconv.FormatUint(uint64(n.Port), 10)
-	addr := net.JoinHostPort(n.IP.String(), port)
-	conn, err := dht.network.Dial(addr)
+func createKeypair(dir string, pass []byte) (publ, priv, x []byte, err error) {
+	publ, priv, x, err = core.NewNodeID()
 	if err != nil {
-		return false
+		return
 	}
-	defer conn.Close()
-	req := &core.Message{
-		Hdr:     dht.baseHeader(),
-		Payload: &core.Ping{},
-	}
-	if req.Hdr.RPCID, err = core.NewID(); err != nil {
-		return false
-	}
-	if err = req.Encode(conn); err != nil {
-		return false
-	}
-	resp, err := core.NewMessage(conn)
+	err = ioutil.WriteFile(filepath.Join(dir, "publ"), publ, 0600)
 	if err != nil {
-		return false
+		return
 	}
-	return resp.Hdr.Type == core.TypePing && resp.Hdr.RPCID == req.Hdr.RPCID
+	// XXX: encrypt
+	err = ioutil.WriteFile(filepath.Join(dir, "priv"), priv, 0600)
+	if err != nil {
+		return
+	}
+	err = ioutil.WriteFile(filepath.Join(dir, "x"), x, 0600)
+	return
 }

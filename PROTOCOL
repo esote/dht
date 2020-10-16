@@ -1,178 +1,385 @@
-0. Notes
+XXX. Introduction
 
-	A byte refers to a grouping of eight bits and is synonymous with an
-	octet. All integers are in network order.
+	This document describes the format used for communication between nodes.
+	A "byte" is the same as an "octet". All values described as integers are
+	assumed to be in network (big-endian) order. All values described as
+	random are assumed to be chosen from a cryptographically-secure source.
 
-1. Message format
+	This document is formatted to be displayed with 8-space tabs.
 
-	Messages consist of a header and payload.
+	// TODO: reference papers, RFC, specs for things used
 
-2. Message header format
+XXX. Message format
 
-	Each message has a fixed-size header that must be included.
+	Messages consist of a pre-body header and an encrypted body with a
+	header and payload.
 
-	Format:
-
-		MAGIC [5 bytes]
-
-			MAGIC must be the bytes: 0x8F 0x4D 'K' 'A' 'D'.
-
-		IDENT_LEN [8 bytes]
-
-			Length of IDENT as an unsigned integer.
-
-		IDENT [IDENT_LEN bytes]
-
-			The network's identity. Used to distinguish multiple,
-			independent networks.
-
-		MSG_TYPE [1 byte]
-
-			Payload type. Possible values are:
-
-			0	PING
-			1	STORE
-			2	FIND_NODE
-			3	FIND_NODE_RESP
-			4	FIND_VALUE
-			5	FIND_VALUE_RESP
-			255	ERROR
-
-		RPC_ID [20 bytes]
-
-			A randomly generated value which is newly generated for
-			requests and echoed back for responses.
-
-		NODE_IP [16 bytes]
-
-			IPv6 address of the the node sending the message. For
-			IPv4 addresses use an IPv4-mapped IPv6 address.
-
-		NODE_PORT [2 bytes]
-
-			Unsigned integer network port the node sending the
-			message is listening on.
-
-		NODE_ID [20 bytes]
-
-			Identifying value for the node sending the message.
-
-3. PING message payload format
-
-	A PING message is used to determine if a node is healthy. It does not
-	contain a payload.
-
-4. STORE message payload format
-
-	A STORE message is used to ask a node to store a key-value pair.
+	Messages may be in two formats: fixed and stream. Fixed-format messages
+	are meant for UDP: they fit within a single datagram, and are padded to
+	prevent leaking the message length and thus message type. Stream-format
+	messages are meant for TCP: they may be long, so packet retransmission
+	and strict packet ordering are useful.
 
 	Format:
 
-		KEY [20 bytes]
+		VERSION [1 byte]
 
-			Identifier for VALUE.
+			Protocol version. The version of this protocol spec is
+			0 (zero).
 
-		LENGTH [8 bytes]
+		BODY_KIND [1 byte]
 
-			Length of VALUE as an unsigned integer.
+			Message body format.
 
-		VALUE [LENGTH bytes]
+			(value)	(name)
+			0	FIXED
+			1	STREAM
 
-			Data to be stored.
+		BODY [variable bytes]
 
-5. FIND_NODE message payload format
+			See either "Fixed-size message body format" when
+			BODY_KIND is FIXED, or "Stream message body format" when
+			BODY_KIND is STREAM.
 
-	A FIND_NODE message is used to request the closest nodes to a given
-	node. When a node receives a FIND_NODE message it responds with a
-	FIND_NODE_RESP message.
+XXX. Fixed-size message body format
 
-	Format:
-
-		COUNT [1 byte]
-
-			Maximum count of node triples the recipient should
-			include in their response, as an unsigned integer. It
-			must not be zero.
-
-		TARGET [20 bytes]
-
-			Identifying value for the target node ID.
-
-6. FIND_NODE_RESP message payload format
-
-	A FIND_NODE_RESP message is sent in response to a FIND_NODE message.
+	Fixed-size message bodies are encrypted, see the section "Encryption"
+	for details on how this is done.
 
 	Format:
 
-		COUNT [1 byte]
+		EPHEM_PUBL [32 bytes]
 
-			Count of node triples in the NODES field.
+			Ephemeral X25519 public key of the ephemeral keypair
+			used with the message recipient's public key (their node
+			ID) to compute a shared secret.
 
-		NODES [COUNT times]
+		HKDF_SALT [64 byes]
 
-			List of node triples. NODES is only included when COUNT
-			is nonzero. Node triple format:
+			Random value, used when computing the XChaCha20 key.
 
-				IP [16 bytes]
-					IP address of the node in IPv6 format.
-				PORT [2 bytes]
-					Unsigned integer port of the node.
-				ID [20 bytes]
-					Identifying value of the node.
+		NONCE [24 bytes]
 
-7. FIND_VALUE message payload format
+			Random value, used when encrypting with XChaCha20.
 
-	A FIND_VALUE message is used to request a value from a node. When a node
-	receives a FIND_VALUE message it responds with a FIND_VALUE_RESP
+		FIXED_CIPHERTEXT [16246 bytes]
+
+			Encrypted message header and payload. For the plaintext
+			format of the data encrypted in FIXED_CIPHERTEXT, see
+			the section "Fixed-size message body ciphertext format".
+
+		POLY1305_TAG [16 bytes]
+
+			Poly1305 MAC.
+
+XXX. Fixed-size message body ciphertext format.
+
+	This section describes the format of the data encrypted in a fixed-size
 	message.
 
 	Format:
 
-		KEY [20 bytes]
+		HEADER [159 bytes]
 
-			Identifier for the value desired.
+			Message header. See "Message header format"
 
-		OFFSET [8 bytes]
+		PAYLOAD [variable bytes]
 
-			Unsigned integer used to indicate the seek offset, in
-			bytes, for the desired value.
+			Message payload, its contents depend on the header
+			MSG_TYPE value.
+
+		PADDING [variable bytes]
+
+			Padding of 0 (zero) bytes such that the fixed-size
+			message fits exactly in 2^14 (16384) bytes.
+
+		SIG [64 bytes]
+
+			Ed25519 signature of the header, payload, and padding by
+			the sending node.
+
+XXX. Stream message body format
+
+	Stream message bodies are encrypted in chunks, see the section
+	"Encryption" for details on how this is done.
+
+	Format:
+
+		EPHEM_PUBL [32 bytes]
+
+			Ephemeral X25519 public key of the ephemeral keypair
+			used with the message recipient's public key (their node
+			ID) to compute a shared secret.
+
+		HKDF_SALT [64 bytes]
+
+			Random value, used when computing the XChaCha20 key.
+
+		STREAM_CIPHERTEXT [variable bytes]
+
+			Stream of encrypted blocks of data. For the plaintext
+			format of the data encrypted in STREAM_CIPHERTEXT as
+			chunked in CIPHERTEXT_BLOCK, see the section "Stream
+			message body ciphertext format".
+
+			Format:
+
+				NONCE [24 bytes]
+
+					Concatenation of a 16-byte random value
+					and an 8-byte counter. Used when
+					encrypting CIPHERTEXT_BLOCK with
+					XChaCha20.
+
+				CIPHERTEXT_BLOCK [variable bytes]
+
+					XChaCha20-encrypted ciphertext block.
+					All blocks except the last block are
+					65536 bytes in size.
+
+				POLY1305_TAG [16 bytes]
+
+					Poly1305 MAC.
+
+XXX. Stream message body ciphertext format
+
+	This section describes the format of the data encrypted in a streamed
+	message.
+
+	Format:
+
+		HEADER [159 bytes]
+
+			Message header. See "Message header format"
+
+		SIG [64 bytes]
+
+			Ed25519 signature of the header by the sending node.
+
+		PAYLOAD [variable bytes]
+
+			Message payload, its contents depend on the header
+			MSG_TYPE value.
+
+XXX. Message header format
+
+	The message header describes various details about a message and its
+	sender.
+
+	Format:
+
+		MSG_TYPE [1 byte]
+
+			Payload type.
+
+			(value)	(name)		(body format type)
+			0	PING		fixed
+			1	STORE		fixed
+			2	DATA		stream
+			3	FIND_NODE	fixed
+			4	FIND_NODE_RESP	fixed
+			5	FIND_VALUE	fixed
+			6	ERROR		fixed
+
+		NODE_ID [32 bytes]
+
+			Ed25519 public key of the sending node. See the section
+			"Node ID generation".
+
+		PUZ_DYN_X [64 bytes]
+
+			Value "x" used to solve the dynamic crypto puzzle. See
+			the section "Node ID generation".
+
+		NODE_IP [16 bytes]
+
+			IPv6 address of the node sending the message. For IPv4
+			addresses, use an IPv4-mapped IPv6 address.
+
+		NODE_PORT [2 bytes]
+
+			Unsigned integer network port the node is listening on.
+
+		RPC_ID [20 bytes]
+
+			Random value used to define a session of communication.
+
+		TIME [8 bytes]
+
+			Unsigned integer UNIX timestamp at which this message is
+			expired, which should be 10 seconds from when the
+			message will be sent.
+
+		NONCE [16 bytes]
+
+			Random value.
+
+XXX. PING message payload format
+
+	The PING message contains no payload. The PING message is used to check
+	if a node is alive.
+
+XXX. STORE message payload format
+
+	The STORE message is used to ask a node to store a key-value pair. If
+	the node agrees it responds with a PING message and the requester sends
+	a DATA message containing the value. Otherwise the recipient should
+	respond with an ERROR message.
+
+	Format:
+
+		KEY [64 bytes]
+
+			Identifier for the value of the key-value pair. See the
+			section "Key ID generation" for details on how this is
+			chosen.
 
 		LENGTH [8 bytes]
 
-			Unsigned integer used to indicate the length, in bytes,
-			for the desired value after OFFSET is taken into
-			account. A LENGTH of zero represents an undefined
-			length, meaning the entire value after OFFSET should be
-			given.
+			Length of the value as an unsigned integer.
 
-8. FIND_VALUE_RESP message payload format
+XXX. DATA message payload format
 
-	A FIND_VALUE_RESP message is sent in response to a FIND_VALUE message.
+	The DATA message is used to send values.
 
 	Format:
 
 		LENGTH [8 bytes]
 
-			Length of VALUE as an unsigned integer. A LENGTH of zero
-			indicates this node does not have the value requested.
+			Length of the value field as an unsigned integer. Length
+			must not be zero.
 
 		VALUE [LENGTH bytes]
 
-			Data received.
+			Data representing the value in a key-value pair.
 
-9. ERROR message payload format
+XXX. FIND_NODE message payload format
 
-	An ERROR message can be sent in response to any message except an ERROR
-	message. Returning an ERROR message is preferred to dropping the request
-	because it still indicates the node is alive.
+	The FIND_NODE message is used to request the closest nodes to a given
+	node.
 
 	Format:
 
-		LENGTH [8 bytes]
+		COUNT [1 byte]
+
+			Maximum count of nodes the recipient should include in
+			their response, as an unsigned integer. COUNT must not
+			be zero.
+
+		TARGET [32 bytes]
+
+			Node identifier for the target node.
+
+XXX. FIND_NODE_RESP message payload format
+
+	The FIND_NODE_RESP message is used in response to a FIND_NODE message.
+
+	Format:
+
+		COUNT [1 byte]
+
+			Count of node triples in the NODES field, as an unsigned
+			integer.
+
+		NODES [COUNT times]
+
+			List of node triples. NODES is only included when COUNT
+			is nonzero. A node triple does not contain sufficient
+			information to validate a node's ID. The node must be
+			sent a PING message to validate it is alive and that it
+			has completed the crypto puzzles detailed in the section
+			"Node ID generation". Node triple format:
+
+				NODE_ID [32 bytes]
+
+					Node identifier.
+
+				NODE_IP [16 bytes]
+
+					IP address of the node in IPv6 format.
+
+				NODE_PORT [2 bytes]
+
+					Unsigned integer network port of the
+					node.
+
+XXX. FIND_VALUE message payload format
+
+	The FIND_VALUE message is used to request a value from a node. When a
+	node receives a FIND_VALUE message it may respond with a DATA message if
+	the node has the value, or the FIND_NODE_RESP if the node does not
+	contain the value to inform the requester of nearby nodes.
+
+	Format:
+
+		KEY [64 bytes]
+
+			Identifier for the value of the key-value pair. See the
+			section "Key ID generation" for details on how this is
+			chosen.
+
+XXX. ERROR message payload format
+
+	The ERROR message can be sent in response to any message except the
+	ERROR message. Returning an ERROR message is preferred to dropping the
+	request because it still indicates the node is alive.
+
+	Format:
+
+		LENGTH [1 byte]
 
 			Length of ERROR_MSG as an unsigned integer. LENGTH must
-			not be zero.
+			be nonzero.
 
 		ERROR_MSG [LENGTH bytes]
 
 			The error value.
+
+XXX. Node ID generation
+
+	Node identifiers are Ed25519 public keys which satisfy two "cryto
+	puzzles". Let PK be an Ed25519 public key. PK is a valid node identifier
+	if and only if:
+
+	a) H(H(PK)) has 23 leading zero bits, where H is SHA-512.
+
+	b) A random 64-byte value X is found such that H(H(PK) xor X) has 24
+	leading zero bits, where H is SHA3-512.
+
+	This scheme provides a few benefits:
+
+	a) Increases the difficulty of carefully choosing a node identifier
+	which is close to another node.
+
+	b) Increases the time required to generate a node identifier.
+
+XXX. Key ID generation
+
+	Keys, as used in key-value pairs, are the SHA-512 hash of their
+	corresponding value.
+
+XXX. Encryption
+
+	Encryption and decryption are done using a node's Ed25519 keypair
+	converted to a X25519 keypair. // TODO: describe/reference how?
+
+	Fixed-size data is encrypted by generating an ephemeral X25519 keypair
+	from a random seed, then computing a shared secret using the ephemeral
+	private key and the target's public key. From there a 64-byte salt is
+	generated and fed into a SHA-512 HKDF, from which is read a 32-byte
+	XChaCha20 key. All chunks encrypted with the XChacha20 cipher include a
+	Poly1305 MAC tag at the end. Encryption of fixed-size data is done using
+	a random 24-byte nonce. This format requires the ephemeral public key,
+	HKDF salt, XChaCha20 nonce, and Poly1305 tag be sent alongside the
+	ciphertext.
+
+	Stream data is encrypted similar to fixed-size data encryption with the
+	following exceptions. The ephemeral key and HKDF salt are sent before
+	the ciphertext chunks, and each chunk includes its own nonce and
+	Poly1305 tag. Stream chunk 24-byte nonces are the concatenation of a
+	16-byte random value with an 8-byte counter (denoting which block in the
+	stream it is, and to make repeating a nonce more unlikely). This 8-byte
+	counter limits the total streamed data size to 2^64 bytes. If larger
+	data needs to be sent, it should be broken up to use a new stream with a
+	new ephemeral keypair and HKDF salt (this protocol prohibits such large
+	values anyways).

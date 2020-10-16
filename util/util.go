@@ -1,9 +1,7 @@
-// Package util provides a few useful functions.
 package util
 
 import (
 	"database/sql"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"math"
@@ -49,16 +47,6 @@ func CopyN(dst io.Writer, src io.Reader, l uint64) (written uint64, err error) {
 	n, err = io.CopyN(dst, src, int64(l))
 	written += uint64(n)
 	return
-}
-
-// ReadNetwork reads from r to a fixed-size value in network order.
-func ReadNetwork(r io.Reader, data interface{}) error {
-	return binary.Read(r, binary.BigEndian, data)
-}
-
-// WriteNetwork writes to w from a fixed-size value in network order.
-func WriteNetwork(w io.Writer, data interface{}) error {
-	return binary.Write(w, binary.BigEndian, data)
 }
 
 // Transact runs a function within a transaction, handlng commit and rollback.

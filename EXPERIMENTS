@@ -1,11 +1,10 @@
 === Active experiments ===
 
-exp/x25519
-	Curve25519-based ECDH encrypted messages & hiding more metadata
-
 === Old experiments ===
 
 archive/exp/SFMH
 	Concurrent self-feeding min-heap
 archive/exp/skad
 	S/Kademlia and Ed25519-based node IDs.
+exp/x25519
+	Curve25519-based ECDH encrypted messages & hiding more metadata
