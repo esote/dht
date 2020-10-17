@@ -7,7 +7,7 @@ import (
 	"math"
 )
 
-// LimitedReader is io.LimitedReader using uint64 instead of int64
+// LimitedReader is io.LimitedReader using uint64 instead of int64.
 type LimitedReader struct {
 	R io.Reader
 	N uint64

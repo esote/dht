@@ -5,26 +5,24 @@ import (
 	"errors"
 	"sync"
 	"time"
-
-	"github.com/esote/dht/core"
 )
 
-// Manager is a cache of message expiring sessions organized by their RPCID.
+// Manager is a cache of expiring sessions with registered handlers.
 type Manager struct {
 	hf HandlerFunc
 
 	capacity int
-	cache    map[string]*list.Element
+	cache    map[interface{}]*list.Element
 	list     *list.List
 
 	open bool
 	mu   sync.Mutex
 }
 
-// Handler contains details on how to route messages.
+// Handler contains details on how to route values.
 type Handler struct {
-	// Ch is used to send recieved messages.
-	Ch chan<- *core.Message
+	// Ch is used to send recieved values.
+	Ch chan<- interface{}
 
 	// Done is used to indicate a session has expired or was otherwise
 	// closed.
@@ -39,22 +37,22 @@ func NewManager(capacity int, hf HandlerFunc) *Manager {
 	return &Manager{
 		hf:       hf,
 		capacity: capacity,
-		cache:    make(map[string]*list.Element, capacity),
+		cache:    make(map[interface{}]*list.Element, capacity),
 		list:     list.New(),
 		open:     true,
 	}
 }
 
-// Register a custom handler for a RPCID, which will be used in favor of the
-// default handler until the RPCID expires.
-func (m *Manager) Register(rpcid string, exp time.Time, handler Handler) error {
+// Register a custom handler for a session, which will be used in favor of the
+// default handler until the session expires.
+func (m *Manager) Register(key interface{}, exp time.Time, handler Handler) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if !m.open {
 		return errors.New("manager: register on closed manager")
 	}
-	if item, hit := m.cache[rpcid]; hit {
+	if item, hit := m.cache[key]; hit {
 		s := item.Value.(*session)
 		if !s.expired() {
 			return errors.New("manager: register on existing session")
@@ -72,31 +70,28 @@ func (m *Manager) Register(rpcid string, exp time.Time, handler Handler) error {
 		m.remove(item)
 	}
 	s := &session{
-		ch:    handler.Ch,
-		done:  handler.Done,
-		rpcid: rpcid,
-		exp:   exp,
+		ch:   handler.Ch,
+		done: handler.Done,
+		key:  key,
+		exp:  exp,
 	}
-	m.cache[rpcid] = m.list.PushFront(s)
+	m.cache[key] = m.list.PushFront(s)
 	return nil
 }
 
-// Enqueue a message and route it to a handler.
-func (m *Manager) Enqueue(msg *core.Message) error {
-	rpcid := string(msg.Hdr.RPCID)
-	exp := time.Unix(int64(msg.Hdr.Time), 0)
-
+// Enqueue a value and route it to a handler.
+func (m *Manager) Enqueue(key, value interface{}, exp time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if !m.open {
 		return errors.New("manager: enqueue on closed manager")
 	}
-	if item, hit := m.cache[rpcid]; hit {
+	if item, hit := m.cache[key]; hit {
 		s := item.Value.(*session)
 		if !s.expired() {
 			// extend session expiration time
-			s.push(exp, msg)
+			s.push(exp, value)
 			return nil
 		}
 		m.remove(item)
@@ -114,27 +109,27 @@ func (m *Manager) Enqueue(msg *core.Message) error {
 	handler := m.hf()
 	// Add new session
 	s := &session{
-		ch:    handler.Ch,
-		done:  handler.Done,
-		rpcid: rpcid,
-		exp:   exp,
+		ch:   handler.Ch,
+		done: handler.Done,
+		key:  key,
+		exp:  exp,
 	}
-	s.push(exp, msg)
-	m.cache[rpcid] = m.list.PushFront(s)
+	s.push(exp, value)
+	m.cache[key] = m.list.PushFront(s)
 	return nil
 }
 
-// Remove a session by RPCID from the cache.
-func (m *Manager) Remove(rpcid string) error {
+// Remove a session by its key from the cache.
+func (m *Manager) Remove(key interface{}) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if !m.open {
 		return errors.New("manager: remove on closed manager")
 	}
-	item, hit := m.cache[rpcid]
+	item, hit := m.cache[key]
 	if !hit {
-		return errors.New("manager: session with rpc does not exist")
+		return errors.New("manager: session with key does not exist")
 	}
 	m.remove(item)
 	return nil
@@ -160,26 +155,26 @@ func (m *Manager) Close() error {
 
 func (m *Manager) remove(item *list.Element) {
 	item.Value.(*session).close()
-	delete(m.cache, item.Value.(*session).rpcid)
+	delete(m.cache, item.Value.(*session).key)
 	m.list.Remove(item)
 }
 
 type session struct {
-	ch   chan<- *core.Message
+	ch   chan<- interface{}
 	done chan<- struct{}
 
-	rpcid string
-	exp   time.Time
+	key interface{}
+	exp time.Time
 }
 
 func (s *session) expired() bool {
 	return s.exp.Before(time.Now().UTC())
 }
 
-func (s *session) push(exp time.Time, msg *core.Message) {
+func (s *session) push(exp time.Time, value interface{}) {
 	s.exp = exp // XXX: only update exp if sending on ch succeeds?
 	select {
-	case s.ch <- msg:
+	case s.ch <- value:
 	default:
 	}
 }

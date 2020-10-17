@@ -6,7 +6,7 @@ import (
 )
 
 func (dht *DHT) handlerFunc() *session.Handler {
-	ch := make(chan *core.Message, 1)
+	ch := make(chan interface{}, 1)
 	done := make(chan struct{}, 1)
 	dht.handlers.Add(1)
 	go dht.handle(ch, done)
@@ -24,22 +24,29 @@ handle:
 		<-ping
 			->data|
 		<-error|
+	->find_node
+		<-find_node_resp|
+		<-error|
+	->find_value
+		<-data|
+		<-error|
 */
 
 // TODO: log errors
-func (dht *DHT) handle(ch chan *core.Message, done chan struct{}) {
+func (dht *DHT) handle(ch chan interface{}, done chan struct{}) {
 	defer dht.handlers.Done()
 	defer close(ch)
 	defer close(done)
-	msg := dht.recv(ch, done)
+	msg, c := dht.recv(ch, done)
 	if msg == nil {
 		// Channel should have a message prior to starting the handler.
 		return
 	}
-	// TODO: update rtable with new node
+	defer c.Close()
 	rpcid := msg.Hdr.RPCID
 	// Manually remove session if returning prior to expiration.
 	defer dht.sman.Remove(string(rpcid))
+	// TODO: update rtable with new node
 	// Target node to converse with.
 	target := &Node{
 		ID:   msg.Hdr.NodeID,
@@ -67,12 +74,12 @@ func (dht *DHT) handle(ch chan *core.Message, done chan struct{}) {
 		if err := dht.send(rpcid, payload, target); err != nil {
 			return
 		}
-		if msg = dht.recv(ch, done); msg == nil {
+		if msg, c = dht.recv(ch, done); msg == nil {
 			return
 		}
+		defer c.Close()
 		switch v := msg.Payload.(type) {
 		case *core.DataPayload:
-			// TODO: need to close v.Value?
 			if v.Length != length {
 				return
 			}
@@ -85,11 +92,43 @@ func (dht *DHT) handle(ch chan *core.Message, done chan struct{}) {
 		return
 	case *core.FindNodePayload:
 		// Respond with list of nodes, or error.
+		if v.Count > K {
+			v.Count = K
+		} else if v.Count == 0 {
+			// Count must be positive
+			return // TODO: give error
+		}
+		closest, err := dht.rtable.Closest(v.Target, K)
+		if err != nil {
+			// TODO: give error
+			return
+		}
+		payload := &core.FindNodeRespPayload{
+			Nodes: make([]core.NodeTriple, len(closest)),
+		}
+		for i, n := range closest {
+			payload.Nodes[i] = core.NodeTriple{
+				NodeID:   n.ID,
+				NodeIP:   n.IP,
+				NodePort: n.Port,
+			}
+		}
+		_ = dht.send(rpcid, payload, target)
 		return
 	case *core.FindValuePayload:
 		// Respond with value if we have it, otherwise respond with
-		// FindNodeResp of nodes closest to value, otherwise respond
-		// with error.
+		// error.
+		value, length, err := dht.storer.Load(v.Key)
+		if err != nil {
+			// TODO: give error
+			return
+		}
+		defer value.Close()
+		payload := &core.DataPayload{
+			Length: length,
+			Value:  value,
+		}
+		_ = dht.send(rpcid, payload, target)
 		return
 	default:
 		// Unexpected message.

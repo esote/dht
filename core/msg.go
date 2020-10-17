@@ -271,7 +271,6 @@ func (msg *Message) UnmarshalStream(r io.Reader, priv []byte) error {
 		return errors.New("signature invalid")
 	}
 
-	// TODO: support streaming of traditionally-fixed-size message payloads
 	switch msg.Hdr.MsgType {
 	case TypeData:
 		msg.Payload = new(DataPayload)

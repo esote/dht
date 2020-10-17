@@ -307,8 +307,7 @@ XXX. FIND_VALUE message payload format
 
 	The FIND_VALUE message is used to request a value from a node. When a
 	node receives a FIND_VALUE message it may respond with a DATA message if
-	the node has the value, or the FIND_NODE_RESP if the node does not
-	contain the value to inform the requester of nearby nodes.
+	the node has the value.
 
 	Format:
 

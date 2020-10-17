@@ -9,7 +9,7 @@ import (
 
 func TestManager(t *testing.T) {
 	const c = 3
-	ch := make(chan *core.Message, c)
+	ch := make(chan interface{}, c)
 	done := make(chan struct{}, c)
 	hf := func() *Handler {
 		return &Handler{
@@ -28,7 +28,7 @@ func TestManager(t *testing.T) {
 		},
 	}
 	for i := 0; i < c+1; i++ {
-		if err := m.Enqueue(&msg); err != nil {
+		if err := m.Enqueue(string(rpcid), &msg, exp); err != nil {
 			t.Fatal(err)
 		}
 	}

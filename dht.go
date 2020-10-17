@@ -33,6 +33,7 @@ type KeyID []byte
 
 const KeyIDSize = core.KeySize
 
+// TODO: remove, use core.NodeTriple directly
 type Node struct {
 	ID   NodeID
 	IP   net.IP
@@ -245,6 +246,7 @@ func (dht *DHT) ping(n *Node) bool {
 }
 */
 
+// TODO: log errors
 func (dht *DHT) listenUDP() {
 	defer dht.listeners.Done()
 	buf := make([]byte, core.FixedMessageSize)
@@ -260,23 +262,21 @@ func (dht *DHT) listenUDP() {
 		}
 		n, addr, err := dht.udp.ReadFrom(buf)
 		if err != nil {
-			// TODO log
 			continue
 		}
 		var msg core.Message
 		if err = msg.UnmarshalFixed(buf[:n], dht.priv); err != nil {
-			// TODO log
 			continue
 		}
 		// XXX: verify remote addr matches msg addr
 		_ = addr
-		if err = dht.sman.Enqueue(&msg); err != nil {
-			// TODO log
+		if err = dht.enqueue(&msg, nil); err != nil {
 			continue
 		}
 	}
 }
 
+// TODO: log errors
 func (dht *DHT) listenTCP() {
 	defer dht.listeners.Done()
 	for {
@@ -301,7 +301,7 @@ func (dht *DHT) listenTCP() {
 			continue
 		}
 		// XXX: verify remote addr matches msg addr
-		if err = dht.sman.Enqueue(&msg); err != nil {
+		if err = dht.enqueue(&msg, conn); err != nil {
 			continue
 		}
 		// XXX: close conn in dht handler or include io.Closer
