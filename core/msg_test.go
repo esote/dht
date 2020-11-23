@@ -30,6 +30,7 @@ func TestFixed(t *testing.T) {
 	}
 
 	hash := sha512.Sum512(nil)
+	key := hash[32:]
 	l := uint64(3)
 
 	msg1 := Message{
@@ -44,8 +45,9 @@ func TestFixed(t *testing.T) {
 			RPCID:    rpcid,
 			Time:     uint64(time.Now().Add(30 * time.Second).Unix()),
 		},
+		// XXX: test out all payload types
 		Payload: &StorePayload{
-			Key:    hash[:],
+			Key:    key,
 			Length: l,
 		},
 	}
@@ -67,7 +69,7 @@ func TestFixed(t *testing.T) {
 	if !ok {
 		t.Fatal("incorrect message payload type")
 	}
-	if !bytes.Equal(payload.Key, hash[:]) || payload.Length != l {
+	if !bytes.Equal(payload.Key, key) || payload.Length != l {
 		t.Fatal("payload incorrect")
 	}
 }

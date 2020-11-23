@@ -70,3 +70,13 @@ func Transact(db *sql.DB, f func(tx *sql.Tx) error) (err error) {
 	err = tx.Commit()
 	return
 }
+
+type readCloser struct {
+	io.Reader
+	io.Closer
+}
+
+// JoinReadCloser combines a Reader and Closer to a ReadCloser.
+func JoinReadCloser(r io.Reader, c io.Closer) io.ReadCloser {
+	return &readCloser{r, c}
+}

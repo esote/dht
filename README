@@ -1,6 +1,5 @@
 DHT is an experiment to write a distributed hash table following the Kademlia
 paper https://pdos.csail.mit.edu/~petar/papers/maymounkov-kademlia-lncs.pdf.
 
-DHT is in active (perhaps slow) development.
-
-What's left? See the TODO and EXPERIMENTS files.
+What's left? See the TODO and EXPERIMENTS files, and the TODO and XXX comments
+in code.

@@ -1,4 +1,4 @@
-package dht
+package rtable
 
 import (
 	"errors"
@@ -6,21 +6,23 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+
+	"github.com/esote/dht/core"
 )
 
 // RTable stores nodes. RTable is safe for concurrent use.
 type RTable interface {
 	// Store a node.
-	Store(n *Node) error
+	Store(n *core.NodeTriple) error
 
 	// Oldest node in the id's corresponding bucket.
-	Oldest(id NodeID) (*Node, error)
+	Oldest(id []byte) (*core.NodeTriple, error)
 
 	// Remove node by id.
-	Remove(id NodeID) error
+	Remove(id []byte) error
 
 	// Closest finds at most k closest, unequal nodes to id.
-	Closest(id NodeID, k int) ([]*Node, error)
+	Closest(id []byte, k int) ([]*core.NodeTriple, error)
 
 	// Close the RTable.
 	io.Closer
@@ -32,11 +34,11 @@ var (
 )
 
 type rtable struct {
-	self    NodeID
-	buckets [NodeIDSize * 8]KBucket
+	self    []byte
+	buckets [core.NodeIDSize * 8]KBucket
 }
 
-func NewRTable(self NodeID, k int, dir string) (RTable, error) {
+func NewRTable(self []byte, k int, dir string) (RTable, error) {
 	rt := &rtable{
 		self: self,
 	}
@@ -51,48 +53,28 @@ func NewRTable(self NodeID, k int, dir string) (RTable, error) {
 	return rt, nil
 }
 
-func (rt *rtable) Store(n *Node) error {
+func (rt *rtable) Store(n *core.NodeTriple) error {
 	bucket := rt.buckets[rt.bucketIndex(n.ID)]
 	err := bucket.Store(n)
 	if err == ErrKBucketFull {
 		err = ErrRTableFull
 	}
 	return err
-	/*
-		if err := bucket.Store(n); err != ErrKBucketFull {
-			return err
-		}
-		oldest, err := bucket.Oldest()
-		if err != nil {
-			return err
-		}
-		// TODO: move ping out of rtable?
-		if rt.ping(oldest) {
-			if err = bucket.Store(oldest); err != nil {
-				return err
-			}
-			return ErrRTableFull
-		}
-		if err = bucket.Remove(oldest.ID); err != nil {
-			return err
-		}
-		return bucket.Store(n)
-	*/
 }
 
-func (rt *rtable) Oldest(id NodeID) (*Node, error) {
+func (rt *rtable) Oldest(id []byte) (*core.NodeTriple, error) {
 	bucket := rt.buckets[rt.bucketIndex(id)]
 	return bucket.Oldest()
 }
 
-func (rt *rtable) Remove(id NodeID) error {
+func (rt *rtable) Remove(id []byte) error {
 	bucket := rt.buckets[rt.bucketIndex(id)]
 	return bucket.Remove(id)
 }
 
-func (rt *rtable) Closest(id NodeID, k int) ([]*Node, error) {
+func (rt *rtable) Closest(id []byte, k int) ([]*core.NodeTriple, error) {
 	var err error
-	sorted := make([]*Node, 0, k)
+	sorted := make([]*core.NodeTriple, 0, k)
 	dist := rt.bucketIndex(id)
 	sorted, err = rt.buckets[dist].Append(sorted, k)
 	if err != nil {
@@ -113,7 +95,8 @@ func (rt *rtable) Closest(id NodeID, k int) ([]*Node, error) {
 		}
 	}
 	sort.Slice(sorted, func(i, j int) bool {
-		return id.LCP(sorted[i].ID) < id.LCP(sorted[j].ID)
+		// Larger LCP means closer to id.
+		return core.LCP(id, sorted[i].ID) > core.LCP(id, sorted[j].ID)
 	})
 	return sorted, nil
 }
@@ -127,8 +110,8 @@ func (rt *rtable) Close() (err error) {
 	return
 }
 
-func (rt *rtable) bucketIndex(id NodeID) int {
-	return rt.self.LCP(id)
+func (rt *rtable) bucketIndex(id []byte) int {
+	return core.LCP(rt.self, id)
 }
 
 func bucketFilename(i int) string {

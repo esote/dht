@@ -1,4 +1,4 @@
-package dht
+package rtable
 
 import (
 	"container/list"
@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/url"
 
+	"github.com/esote/dht/core"
 	"github.com/esote/dht/util"
 
 	// SQLite3 driver.
@@ -17,20 +18,20 @@ import (
 type KBucket interface {
 	// Load node by ID. If no node exists with that ID in the bucket, return
 	// ErrKBucketNotFound.
-	Load(id NodeID) (*Node, error)
+	Load(id []byte) (*core.NodeTriple, error)
 
 	// Store or update node. If the bucket is full, return ErrKBucketFull.
-	Store(n *Node) error
+	Store(n *core.NodeTriple) error
 
 	// Load oldest node in bucket.
-	Oldest() (*Node, error)
+	Oldest() (*core.NodeTriple, error)
 
 	// Remove node by ID.
-	Remove(id NodeID) error
+	Remove(id []byte) error
 
 	// Append bucket contents to slice s, in order of most recent first,
 	// until s is at most length n.
-	Append(s []*Node, n int) ([]*Node, error)
+	Append(s []*core.NodeTriple, n int) ([]*core.NodeTriple, error)
 
 	// Close the KBucket.
 	io.Closer
@@ -60,7 +61,7 @@ func NewKBucket(file string, k int) (KBucket, error) {
 	query.Set("_secure_delete", "on")
 	u.RawQuery = query.Encode()
 
-	// TODO: set SQLITE_LIMIT_LENGTH to NodeSize
+	// TODO: set SQLITE_LIMIT_LENGTH to core.NodeTripleSize
 	db, err := sql.Open("sqlite3", u.String())
 	if err != nil {
 		return nil, err
@@ -83,14 +84,14 @@ func NewKBucket(file string, k int) (KBucket, error) {
 	return kb, nil
 }
 
-func (kb *kbucket) Load(id NodeID) (*Node, error) {
+func (kb *kbucket) Load(id []byte) (*core.NodeTriple, error) {
 	if e, ok := kb.m[string(id)]; ok {
-		return e.Value.(*Node), nil
+		return e.Value.(*core.NodeTriple), nil
 	}
 	return nil, ErrKBucketNotExist
 }
 
-func (kb *kbucket) Store(n *Node) error {
+func (kb *kbucket) Store(n *core.NodeTriple) error {
 	if e, ok := kb.m[string(n.ID)]; ok {
 		kb.l.MoveToBack(e)
 		return kb.sync()
@@ -102,14 +103,14 @@ func (kb *kbucket) Store(n *Node) error {
 	return kb.sync()
 }
 
-func (kb *kbucket) Oldest() (*Node, error) {
+func (kb *kbucket) Oldest() (*core.NodeTriple, error) {
 	if kb.l.Len() == 0 {
 		return nil, ErrKBucketEmpty
 	}
-	return kb.l.Front().Value.(*Node), nil
+	return kb.l.Front().Value.(*core.NodeTriple), nil
 }
 
-func (kb *kbucket) Remove(id NodeID) error {
+func (kb *kbucket) Remove(id []byte) error {
 	if e, ok := kb.m[string(id)]; ok {
 		kb.l.Remove(e)
 		delete(kb.m, string(id))
@@ -118,9 +119,9 @@ func (kb *kbucket) Remove(id NodeID) error {
 	return ErrKBucketNotExist
 }
 
-func (kb *kbucket) Append(s []*Node, n int) ([]*Node, error) {
+func (kb *kbucket) Append(s []*core.NodeTriple, n int) ([]*core.NodeTriple, error) {
 	for e := kb.l.Back(); e != nil && n > 0; e = e.Prev() {
-		s = append(s, e.Value.(*Node))
+		s = append(s, e.Value.(*core.NodeTriple))
 		n--
 	}
 	return s, nil
@@ -133,14 +134,14 @@ func (kb *kbucket) Close() error {
 // TODO: put queries in statements
 func (kb *kbucket) sync() error {
 	const qTruncate = `DELETE FROM kb`
-	const qInsert = `INSERT INTO kb(index, data) VALUES (?, ?)`
+	const qInsert = `INSERT INTO kb(ind, data) VALUES (?, ?)`
 	return util.Transact(kb.db, func(tx *sql.Tx) (err error) {
 		if _, err = tx.Exec(qTruncate); err != nil {
 			return err
 		}
 		for e, i := kb.l.Back(), 0; e != nil; e, i = e.Prev(), i+1 {
-			data, err := e.Value.(*Node).MarshalBinary()
-			if err != nil {
+			data := make([]byte, core.NodeTripleSize)
+			if err = e.Value.(*core.NodeTriple).MarshalSlice(data); err != nil {
 				return err
 			}
 			if _, err = tx.Exec(qInsert, i, data); err != nil {
@@ -152,13 +153,14 @@ func (kb *kbucket) sync() error {
 }
 
 func (kb *kbucket) load() error {
+	// TODO: "index" is reserved, using "ind" temporarily
 	const qCreate = `
 CREATE TABLE IF NOT EXISTS kb (
-	index INTEGER PRIMARY KEY,
+	ind INTEGER PRIMARY KEY,
 	data BLOB NOT NULL
 )`
-	const qSelect = `SELECT data FROM kb ORDER BY index`
-	const qTruncate = `DELETE FROM kb WHERE index > ?`
+	const qSelect = `SELECT data FROM kb ORDER BY ind`
+	const qTruncate = `DELETE FROM kb WHERE ind > ?`
 	return util.Transact(kb.db, func(tx *sql.Tx) error {
 		if _, err := tx.Exec(qCreate); err != nil {
 			return err
@@ -176,8 +178,8 @@ CREATE TABLE IF NOT EXISTS kb (
 			if err = rows.Scan(&data); err != nil {
 				return err
 			}
-			var n Node
-			if err = n.UnmarshalBinary(data); err != nil {
+			n := new(core.NodeTriple)
+			if err = n.UnmarshalSlice(data); err != nil {
 				return err
 			}
 			kb.m[string(n.ID)] = kb.l.PushBack(n)

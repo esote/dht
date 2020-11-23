@@ -1,4 +1,4 @@
-XXX. Introduction
+0. Introduction
 
 	This document describes the format used for communication between nodes.
 	A "byte" is the same as an "octet". All values described as integers are
@@ -9,7 +9,7 @@ XXX. Introduction
 
 	// TODO: reference papers, RFC, specs for things used
 
-XXX. Message format
+1. Message format
 
 	Messages consist of a pre-body header and an encrypted body with a
 	header and payload.
@@ -41,7 +41,7 @@ XXX. Message format
 			BODY_KIND is FIXED, or "Stream message body format" when
 			BODY_KIND is STREAM.
 
-XXX. Fixed-size message body format
+2. Fixed-size message body format
 
 	Fixed-size message bodies are encrypted, see the section "Encryption"
 	for details on how this is done.
@@ -72,7 +72,7 @@ XXX. Fixed-size message body format
 
 			Poly1305 MAC.
 
-XXX. Fixed-size message body ciphertext format.
+3. Fixed-size message body ciphertext format.
 
 	This section describes the format of the data encrypted in a fixed-size
 	message.
@@ -98,7 +98,7 @@ XXX. Fixed-size message body ciphertext format.
 			Ed25519 signature of the header, payload, and padding by
 			the sending node.
 
-XXX. Stream message body format
+4. Stream message body format
 
 	Stream message bodies are encrypted in chunks, see the section
 	"Encryption" for details on how this is done.
@@ -141,7 +141,7 @@ XXX. Stream message body format
 
 					Poly1305 MAC.
 
-XXX. Stream message body ciphertext format
+5. Stream message body ciphertext format
 
 	This section describes the format of the data encrypted in a streamed
 	message.
@@ -161,7 +161,7 @@ XXX. Stream message body ciphertext format
 			Message payload, its contents depend on the header
 			MSG_TYPE value.
 
-XXX. Message header format
+6. Message header format
 
 	The message header describes various details about a message and its
 	sender.
@@ -214,12 +214,12 @@ XXX. Message header format
 
 			Random value.
 
-XXX. PING message payload format
+7. PING message payload format
 
 	The PING message contains no payload. The PING message is used to check
 	if a node is alive.
 
-XXX. STORE message payload format
+8. STORE message payload format
 
 	The STORE message is used to ask a node to store a key-value pair. If
 	the node agrees it responds with a PING message and the requester sends
@@ -228,7 +228,7 @@ XXX. STORE message payload format
 
 	Format:
 
-		KEY [64 bytes]
+		KEY [32 bytes]
 
 			Identifier for the value of the key-value pair. See the
 			section "Key ID generation" for details on how this is
@@ -238,7 +238,7 @@ XXX. STORE message payload format
 
 			Length of the value as an unsigned integer.
 
-XXX. DATA message payload format
+9. DATA message payload format
 
 	The DATA message is used to send values.
 
@@ -253,7 +253,7 @@ XXX. DATA message payload format
 
 			Data representing the value in a key-value pair.
 
-XXX. FIND_NODE message payload format
+10. FIND_NODE message payload format
 
 	The FIND_NODE message is used to request the closest nodes to a given
 	node.
@@ -270,7 +270,7 @@ XXX. FIND_NODE message payload format
 
 			Node identifier for the target node.
 
-XXX. FIND_NODE_RESP message payload format
+11. FIND_NODE_RESP message payload format
 
 	The FIND_NODE_RESP message is used in response to a FIND_NODE message.
 
@@ -303,21 +303,22 @@ XXX. FIND_NODE_RESP message payload format
 					Unsigned integer network port of the
 					node.
 
-XXX. FIND_VALUE message payload format
+12. FIND_VALUE message payload format
 
 	The FIND_VALUE message is used to request a value from a node. When a
-	node receives a FIND_VALUE message it may respond with a DATA message if
-	the node has the value.
+	node receives a FIND_VALUE message it responds with a DATA message if
+	the node has the value, otherwise the FIND_NODE_RESP message if the node
+	does not contain the value to inform the requester of nearby nodes.
 
 	Format:
 
-		KEY [64 bytes]
+		KEY [32 bytes]
 
 			Identifier for the value of the key-value pair. See the
 			section "Key ID generation" for details on how this is
 			chosen.
 
-XXX. ERROR message payload format
+13. ERROR message payload format
 
 	The ERROR message can be sent in response to any message except the
 	ERROR message. Returning an ERROR message is preferred to dropping the
@@ -334,15 +335,15 @@ XXX. ERROR message payload format
 
 			The error value.
 
-XXX. Node ID generation
+14. Node ID generation
 
 	Node identifiers are Ed25519 public keys which satisfy two "cryto
 	puzzles". Let PK be an Ed25519 public key. PK is a valid node identifier
 	if and only if:
 
-	a) H(H(PK)) has 23 leading zero bits, where H is SHA-512.
+	a) H(H(PK)) has 2 leading zero bits, where H is SHA-512.
 
-	b) A random 64-byte value X is found such that H(H(PK) xor X) has 24
+	b) A random 64-byte value X is found such that H(H(PK) xor X) has 2
 	leading zero bits, where H is SHA3-512.
 
 	This scheme provides a few benefits:
@@ -352,12 +353,12 @@ XXX. Node ID generation
 
 	b) Increases the time required to generate a node identifier.
 
-XXX. Key ID generation
+15. Key ID generation
 
-	Keys, as used in key-value pairs, are the SHA-512 hash of their
-	corresponding value.
+	Keys, as used in key-value pairs, are the last 32 bytes of the SHA-512
+	hash of their corresponding value.
 
-XXX. Encryption
+16. Encryption
 
 	Encryption and decryption are done using a node's Ed25519 keypair
 	converted to a X25519 keypair. // TODO: describe/reference how?

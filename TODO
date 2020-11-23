@@ -1,8 +1,11 @@
 === TODO ===
 
-dht.go: bootstrap nodes
-dht.go: logger interface in config
-dht.go: load, store functions
+rtable - check NodeID sizes
+kbucket - check NodeID sizes
+storer - check Key sizes
+
+maybe keep full key 64 bytes when sending requests, but only use last 32 for LCP
+XOR metric.
 
 Review papers listed in PAPERS.
 

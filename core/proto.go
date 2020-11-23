@@ -12,6 +12,7 @@ import (
 	"net"
 
 	"github.com/esote/dht/util"
+	"golang.org/x/crypto/sha3"
 )
 
 const (
@@ -26,13 +27,13 @@ const (
 
 	RPCIDSize    = 20
 	NodeIDSize   = ed25519.PublicKeySize
-	DynXSize     = sha512.Size // sha3.Size=64
+	DynXSize     = 64 // SHA3-512 output size, verified in init
 	HdrNonceSize = 16
 
 	HeaderSize = 1 + NodeIDSize + DynXSize + net.IPv6len + 2 + RPCIDSize +
 		8 + HdrNonceSize
 
-	KeySize        = sha512.Size
+	KeySize        = sha512.Size / 2 // TODO: use full key, just use half when comparing
 	NodeTripleSize = NodeIDSize + net.IPv6len + 2
 	SigSize        = ed25519.SignatureSize
 
@@ -42,6 +43,17 @@ const (
 	FindValuePayloadSize       = KeySize + 8
 	ErrorPayloadMinSize        = 1 + 1
 )
+
+func init() {
+	if DynXSize != sha3.New512().Size() {
+		panic("DynXSize incorrect")
+	}
+
+	// Key and node ID size must be equal to ensure XOR metric works.
+	if KeySize != NodeIDSize {
+		panic("KeySize must equal NodeIDSize")
+	}
+}
 
 var SupportedVersions = map[uint8]bool{
 	Version: true,
@@ -142,8 +154,7 @@ func (hdr *Header) UnmarshalBinary(data []byte) error {
 	copy(hdr.PuzDynX, data)
 	data = data[DynXSize:]
 
-	// TODO: prevent IPv4-mapped IPv4 loopback address, etc. bad IPs
-	hdr.NodeIP = make([]byte, net.IPv6len) // TODO: if .To4, use that?
+	hdr.NodeIP = make([]byte, net.IPv6len)
 	copy(hdr.NodeIP, data)
 	data = data[net.IPv6len:]
 
@@ -309,13 +320,51 @@ func (fnode *FindNodePayload) BodyKind() uint8 { return KindFixed }
 func (fnode *FindNodePayload) MsgType() uint8  { return TypeFindNode }
 
 type NodeTriple struct {
-	NodeID   []byte
-	NodeIP   net.IP
-	NodePort uint16
+	ID   []byte
+	IP   net.IP
+	Port uint16
+}
+
+func (n *NodeTriple) MarshalSlice(data []byte) error {
+	if len(n.ID) != NodeIDSize {
+		return errors.New("ID length invalid")
+	}
+	copy(data, n.ID)
+	data = data[NodeIDSize:]
+
+	ip := n.IP.To16()
+	if ip == nil {
+		return errors.New("IP invalid")
+	}
+	copy(data, ip)
+	data = data[net.IPv6len:]
+
+	binary.BigEndian.PutUint16(data, n.Port)
+	data = data[2:]
+
+	return nil
+}
+
+func (n *NodeTriple) UnmarshalSlice(data []byte) error {
+	if len(data) < NodeTripleSize {
+		return errors.New("node triple truncated")
+	}
+
+	n.ID = make([]byte, NodeIDSize)
+	copy(n.ID, data)
+	data = data[NodeIDSize:]
+
+	n.IP = make([]byte, net.IPv6len)
+	copy(n.IP, data)
+	data = data[net.IPv6len:]
+
+	n.Port = binary.BigEndian.Uint16(data)
+	data = data[2:]
+	return nil
 }
 
 type FindNodeRespPayload struct {
-	Nodes []NodeTriple
+	Nodes []*NodeTriple
 }
 
 var _ FixedPayload = &FindNodeRespPayload{}
@@ -331,21 +380,13 @@ func (fnresp *FindNodeRespPayload) MarshalBinary() ([]byte, error) {
 	b = b[1:]
 
 	for i, n := range fnresp.Nodes {
-		if len(n.NodeID) != NodeIDSize {
-			return nil, fmt.Errorf("node[%d] ID length invalid", i)
+		if n == nil {
+			return nil, fmt.Errorf("node[%d] is nil", i)
 		}
-		copy(b, n.NodeID)
-		b = b[NodeIDSize:]
-
-		ip := n.NodeIP.To16()
-		if ip == nil {
-			return nil, fmt.Errorf("node[%d] IP invalid", i)
+		if err := n.MarshalSlice(b); err != nil {
+			return nil, fmt.Errorf("node[%d] %s", i, err)
 		}
-		copy(b, ip)
-		b = b[net.IPv6len:]
-
-		binary.BigEndian.PutUint16(b, n.NodePort)
-		b = b[2:]
+		b = b[NodeTripleSize:]
 	}
 
 	return data, nil
@@ -363,21 +404,13 @@ func (fnresp *FindNodeRespPayload) UnmarshalBinaryN(data []byte) (int, error) {
 		return 0, errors.New("payload truncated")
 	}
 
-	for i := 0; i < count; i++ {
-		var n NodeTriple
-
-		n.NodeID = make([]byte, NodeIDSize)
-		copy(n.NodeID, data)
-		data = data[NodeIDSize:]
-
-		n.NodeIP = make([]byte, net.IPv6len)
-		copy(n.NodeIP, data)
-		data = data[net.IPv6len:]
-
-		n.NodePort = binary.BigEndian.Uint16(data)
-		data = data[2:]
-
-		fnresp.Nodes = append(fnresp.Nodes, n)
+	fnresp.Nodes = make([]*NodeTriple, count)
+	for i := range fnresp.Nodes {
+		fnresp.Nodes[i] = new(NodeTriple)
+		if err := fnresp.Nodes[i].UnmarshalSlice(data); err != nil {
+			return 0, fmt.Errorf("node[%d] %s", i, err)
+		}
+		data = data[NodeTripleSize:]
 	}
 
 	return 1 + count*NodeTripleSize, nil

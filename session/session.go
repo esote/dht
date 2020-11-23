@@ -45,7 +45,7 @@ func NewManager(capacity int, hf HandlerFunc) *Manager {
 
 // Register a custom handler for a session, which will be used in favor of the
 // default handler until the session expires.
-func (m *Manager) Register(key interface{}, exp time.Time, handler Handler) error {
+func (m *Manager) Register(key interface{}, exp time.Time, handler *Handler) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

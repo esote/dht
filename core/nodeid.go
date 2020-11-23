@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	c1 = 23
-	c2 = 24
+	c1 = 2 // 23
+	c2 = 2 // 24
 )
 
 func NewNodeID() (publ ed25519.PublicKey, priv ed25519.PrivateKey, x []byte, err error) {
@@ -75,7 +75,7 @@ func VerifyNodeID(publ ed25519.PublicKey, x []byte) bool {
 	if _, err := h.Write(p); err != nil {
 		return false
 	}
-	if p = h.Sum(p[:0]); leadingZeros(p) != c1 {
+	if p = h.Sum(p[:0]); leadingZeros(p) < c1 {
 		return false
 	}
 	// Dynamic Puzzle
@@ -93,7 +93,20 @@ func VerifyNodeID(publ ed25519.PublicKey, x []byte) bool {
 		return false
 	}
 	p = h.Sum(p[:0])
-	return leadingZeros(p) == c2
+	return leadingZeros(p) >= c2
+}
+
+// longest common prefix
+func LCP(x, y []byte) int {
+	if len(x) != NodeIDSize || len(y) != NodeIDSize {
+		panic("LCP on invalid IDs")
+	}
+	for i := 0; i < NodeIDSize; i++ {
+		if b := x[i] ^ y[i]; b != 0 {
+			return i*8 + bits.LeadingZeros8(b)
+		}
+	}
+	return NodeIDSize * 8
 }
 
 func leadingZeros(b []byte) int {

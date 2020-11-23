@@ -1,6 +1,7 @@
 package dht
 
 import (
+	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -15,7 +16,7 @@ type Storer interface {
 	// Load a value. Returns the value and its length.
 	//
 	// If the value does not exist, Load returns ErrStorerNotExist.
-	Load(key KeyID) (value io.ReadCloser, length uint64, err error)
+	Load(key []byte) (value io.ReadCloser, length uint64, err error)
 
 	// Store a value. If value is nil, Store is used only to check if the
 	// value could be stored.
@@ -25,11 +26,11 @@ type Storer interface {
 	// storer's quota of key-value pairs has been reached, Storer returns
 	// ErrStorerQuota. If the value is already stored, Store returns
 	// ErrStorerExist.
-	Store(key KeyID, length uint64, value io.Reader) error
+	Store(key []byte, length uint64, value io.Reader) error
 
 	// Delete a value. If the value does not exist, Delete returns
 	// ErrStorerNotExist.
-	Delete(key KeyID) error
+	Delete(key []byte) error
 
 	io.Closer
 }
@@ -63,8 +64,8 @@ func NewFileStorer(dir string, maxLength, maxTotalSize uint64) (Storer, error) {
 	}, nil
 }
 
-func (s *fileStorer) Load(key KeyID) (io.ReadCloser, uint64, error) {
-	file, err := s.s.Open(string(key))
+func (s *fileStorer) Load(key []byte) (io.ReadCloser, uint64, error) {
+	file, err := s.s.Open(hex.EncodeToString(key))
 	if err == os.ErrNotExist {
 		err = ErrStorerNotExist
 	}
@@ -79,7 +80,7 @@ func (s *fileStorer) Load(key KeyID) (io.ReadCloser, uint64, error) {
 	return file, uint64(info.Size()), nil
 }
 
-func (s *fileStorer) Store(key KeyID, length uint64, value io.Reader) error {
+func (s *fileStorer) Store(key []byte, length uint64, value io.Reader) error {
 	if length > s.maxLength {
 		return ErrStorerLarge
 	}
@@ -91,7 +92,7 @@ func (s *fileStorer) Store(key KeyID, length uint64, value io.Reader) error {
 		return ErrStorerLarge
 	}
 	if value == nil {
-		_, err = s.s.Stat(string(key))
+		_, err = s.s.Stat(hex.EncodeToString(key))
 		switch {
 		case err == nil:
 			return ErrStorerExist
@@ -101,7 +102,7 @@ func (s *fileStorer) Store(key KeyID, length uint64, value io.Reader) error {
 			return err
 		}
 	}
-	file, err := s.s.OpenFile(string(key),
+	file, err := s.s.OpenFile(hex.EncodeToString(key),
 		os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	// TODO: check EDQUOT
 	if err == os.ErrExist {
@@ -116,8 +117,8 @@ func (s *fileStorer) Store(key KeyID, length uint64, value io.Reader) error {
 	return err
 }
 
-func (s *fileStorer) Delete(key KeyID) error {
-	err := s.s.Remove(string(key))
+func (s *fileStorer) Delete(key []byte) error {
+	err := s.s.Remove(hex.EncodeToString(key))
 	if err == os.ErrNotExist {
 		err = ErrStorerNotExist
 	}

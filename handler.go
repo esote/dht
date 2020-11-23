@@ -29,35 +29,41 @@ handle:
 		<-error|
 	->find_value
 		<-data|
+		<-find_node_resp|
 		<-error|
 */
-
-// TODO: log errors
 func (dht *DHT) handle(ch chan interface{}, done chan struct{}) {
 	defer dht.handlers.Done()
 	defer close(ch)
 	defer close(done)
-	msg, c := dht.recv(ch, done)
-	if msg == nil {
+	msg, c, err := dht.recv(ch, done)
+	if err != nil {
 		// Channel should have a message prior to starting the handler.
+		dht.log(LogErr, err)
 		return
 	}
 	defer c.Close()
 	rpcid := msg.Hdr.RPCID
 	// Manually remove session if returning prior to expiration.
 	defer dht.sman.Remove(string(rpcid))
-	// TODO: update rtable with new node
 	// Target node to converse with.
-	target := &Node{
+	target := &core.NodeTriple{
 		ID:   msg.Hdr.NodeID,
 		IP:   msg.Hdr.NodeIP,
 		Port: msg.Hdr.NodePort,
+	}
+	// TODO: add to rtable asyncronously while executing handle?
+	if err := dht.update(target); err != nil {
+		dht.log(LogErr, err)
+		// Continue execution
 	}
 	switch v := msg.Payload.(type) {
 	case *core.PingPayload:
 		// Respond with ping.
 		payload := &core.PingPayload{}
-		_ = dht.send(rpcid, payload, target)
+		if err := dht.send(rpcid, payload, target); err != nil {
+			dht.log(LogErr, err)
+		}
 		return
 	case *core.StorePayload:
 		// Check if we can store the value: if not, respond with an
@@ -67,14 +73,18 @@ func (dht *DHT) handle(ch chan interface{}, done chan struct{}) {
 			payload := &core.ErrorPayload{
 				ErrorMsg: []byte("Value already stored"),
 			}
-			_ = dht.send(rpcid, payload, target)
+			if err = dht.send(rpcid, payload, target); err != nil {
+				dht.log(LogErr, err)
+			}
 			return
 		}
 		payload := &core.PingPayload{}
 		if err := dht.send(rpcid, payload, target); err != nil {
+			dht.log(LogErr, err)
 			return
 		}
-		if msg, c = dht.recv(ch, done); msg == nil {
+		if msg, c, err = dht.recv(ch, done); err != nil {
+			dht.log(LogErr, err)
 			return
 		}
 		defer c.Close()
@@ -83,44 +93,62 @@ func (dht *DHT) handle(ch chan interface{}, done chan struct{}) {
 			if v.Length != length {
 				return
 			}
-			_ = dht.storer.Store(key, length, v.Value)
+			if err := dht.storer.Store(key, length, v.Value); err != nil {
+				dht.log(LogErr, err)
+			}
 			return
 		default:
-			// Unexpected message.
+			dht.log(LogDebug, "received unexpected payload type")
 			return
 		}
-		return
 	case *core.FindNodePayload:
 		// Respond with list of nodes, or error.
-		if v.Count > K {
-			v.Count = K
+		if v.Count > k {
+			v.Count = k
 		} else if v.Count == 0 {
-			// Count must be positive
-			return // TODO: give error
+			dht.log(LogNotice, "recv find node with zero count")
+			return
 		}
-		closest, err := dht.rtable.Closest(v.Target, K)
+		closest, err := dht.rtable.Closest(v.Target, k)
 		if err != nil {
-			// TODO: give error
+			dht.log(LogErr, err)
+			payload := &core.ErrorPayload{
+				ErrorMsg: []byte("Failed to find nodes"),
+			}
+			if err = dht.send(rpcid, payload, target); err != nil {
+				dht.log(LogErr, err)
+			}
 			return
 		}
 		payload := &core.FindNodeRespPayload{
-			Nodes: make([]core.NodeTriple, len(closest)),
+			Nodes: closest,
 		}
-		for i, n := range closest {
-			payload.Nodes[i] = core.NodeTriple{
-				NodeID:   n.ID,
-				NodeIP:   n.IP,
-				NodePort: n.Port,
-			}
+		if err = dht.send(rpcid, payload, target); err != nil {
+			dht.log(LogErr, err)
 		}
-		_ = dht.send(rpcid, payload, target)
 		return
 	case *core.FindValuePayload:
-		// Respond with value if we have it, otherwise respond with
-		// error.
+		// Respond with value if we have it, otherwise respond with list
+		// of closest nodes.
 		value, length, err := dht.storer.Load(v.Key)
 		if err != nil {
-			// TODO: give error
+			closest, err := dht.rtable.Closest(v.Key, k)
+			if err != nil {
+				dht.log(LogErr, err)
+				payload := &core.ErrorPayload{
+					ErrorMsg: []byte("Failed to find nodes"),
+				}
+				if err = dht.send(rpcid, payload, target); err != nil {
+					dht.log(LogErr, err)
+				}
+				return
+			}
+			payload := &core.FindNodeRespPayload{
+				Nodes: closest,
+			}
+			if err = dht.send(rpcid, payload, target); err != nil {
+				dht.log(LogErr, err)
+			}
 			return
 		}
 		defer value.Close()
@@ -128,10 +156,12 @@ func (dht *DHT) handle(ch chan interface{}, done chan struct{}) {
 			Length: length,
 			Value:  value,
 		}
-		_ = dht.send(rpcid, payload, target)
+		if err = dht.send(rpcid, payload, target); err != nil {
+			dht.log(LogErr, err)
+		}
 		return
 	default:
-		// Unexpected message.
+		dht.log(LogDebug, "received unexpected payload type")
 		return
 	}
 }
