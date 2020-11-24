@@ -12,6 +12,44 @@ DHT also includes many other security measures:
 
 The network is completely decentralized. For more details read the PROTOCOL.
 
+Program design:
+
+	All code is my own.
+
+	dht.go
+		Main program for orchestrating the Store, Load, and Bootstrap
+		DHT actions.
+	find.go
+		Self-feeding min-heap for concurrently querying nodes.
+	handler.go
+		Take actions on incoming messages.
+	log.go
+		Default logger for printing to stdout/stderr.
+	msg.go
+		Utility functions for receiving and sending messags.
+	storer.go
+		Storer interface for storing and loading key-value pairs in a
+		file splay.
+	update.go
+		Utility function for updating RTable after communicating with
+		nodes.
+	core/
+		PROTOCOL structures and marshalling functions.
+		crypto/
+			XChaCha20 fixed and stream (chunked) encryption.
+			Conversion of Ed25519 Edwards curve keypairs (for
+			signing and identity) to X25519 Montgomery curve
+			keypairs (for encryption).
+	rtable/
+		RTable and KBucket implementations, described in Kademlia paper.
+		160-branch RTable tree based on largest common prefix to node
+		self, and KBucket LRU cache of longest-surviving nodes.
+	session/
+		RPCID session manager: cache of expiring sessions with
+		registered handlers.
+	util/
+		Various utility functions.
+
 To run a node:
 
 1. Install golang: golang.org/dl
