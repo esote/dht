@@ -1,5 +1,62 @@
-DHT is an experiment to write a distributed hash table following the Kademlia
-paper https://pdos.csail.mit.edu/~petar/papers/maymounkov-kademlia-lncs.pdf.
+DHT is a distributed hash table based on the Kademlia paper:
+https://pdos.csail.mit.edu/~petar/papers/maymounkov-kademlia-lncs.pdf.
 
-What's left? See the TODO and EXPERIMENTS files, and the TODO and XXX comments
-in code.
+It also uses the S/Kademlia extension "crypto puzzles" to impede Eclipse and
+Sybil attacks (see the PROTOCOL, section 14 "Node ID Generation" for details).
+
+DHT also includes many other security measures:
+	- Node IDs are Ed25519 keypairs.
+	- All messages are signed by the node's private key.
+	- All messages are encrypted with the recipient's public key.
+	- Fixed-size (UDP) messages are padded to avoid leaking message type.
+
+The network is completely decentralized. For more details read the PROTOCOL.
+
+To run a node:
+
+1. Install golang: golang.org/dl
+
+On Linux distributions like Ubuntu, Fedora, etc. you should be able to install a
+"golang" package through your package manager.
+
+2. Download dht with:
+
+	go get -u github.com/esote/dht/cmd/dht
+
+This will create a "dht" executable in your go/bin folder
+
+3. Create a working directory, for example
+
+	mkdir /tmp/dht
+
+3. Run a node
+
+	~/go/bin/dht -p PORT /PATH/TO/DIR
+
+Flags must be specified before the working directory. For example
+
+	~/go/bin/dht -p 8080 /tmp/dht
+
+The program will ask for a password to encrypt the node's private key. Then it
+accepts commands like a CLI. Commands:
+
+	bootstrap NODEID NODEIP NODEPORT
+
+		Bootstrap a node, NODEID must be full hex code, NODEIP must be
+		an IPv4 or IPv6 address (hostnames not allowed).
+
+	store /PATH/TO/FILE
+
+		Store a new file on the network.
+
+	load KEY /PATH/TO/OUTPUT
+
+		Load a file from the network and save it to an output file. KEY
+		must be full hex code.
+
+	exit
+
+		Quit program. ^D also works.
+
+There is also a flag "-c" to disable CLI input after entering the password,
+meaning the node will only accept requests from other nodes (daemonized).
