@@ -6,7 +6,7 @@ import (
 )
 
 func (dht *DHT) handlerFunc() *session.Handler {
-	ch := make(chan interface{}, 1)
+	ch := make(chan *session.MessageCloser, 1)
 	done := make(chan struct{}, 1)
 	dht.handlers.Add(1)
 	go dht.handle(ch, done)
@@ -17,61 +17,56 @@ func (dht *DHT) handlerFunc() *session.Handler {
 }
 
 /*
-handle:
-	->ping
-		<-ping|
-	->store
-		<-ping
-			->data|
-		<-error|
-	->find_node
-		<-find_node_resp|
-		<-error|
-	->find_value
-		<-data|
-		<-find_node_resp|
-		<-error|
+DHT may receive:
+
+	PING:
+		Respond with PING
+	STORE:
+		If we can store: respond with PING
+			Receive DATA
+		Otherwise: ERROR
+	FIND_NODE:
+		If we can locate nodes: respond with FIND_NODE_RESP
+		Otherwise: ERROR
+	FIND_VALUE:
+		If we have value: respond with DATA
+		Otherwise if we can locate nodes: respond with FIND_NODE_RESP
+		Otherwise: ERROR
 */
-func (dht *DHT) handle(ch chan interface{}, done chan struct{}) {
-	defer dht.handlers.Done()
-	defer close(ch)
+func (dht *DHT) handle(ch chan *session.MessageCloser, done chan struct{}) {
 	defer close(done)
-	msg, c, err := dht.recv(ch, done)
+	defer close(ch)
+	defer dht.handlers.Done()
+
+	msg, err := dht.recv(ch, done)
 	if err != nil {
-		// Channel should have a message prior to starting the handler.
 		dht.log(LogErr, err)
 		return
 	}
-	defer c.Close()
+	// TODO: check close value
+	defer msg.Close()
 	rpcid := msg.Hdr.RPCID
-	// Manually remove session if returning prior to expiration.
+	// TODO: check close value
 	defer dht.sman.Remove(string(rpcid))
-	// Target node to converse with.
+
 	target := &core.NodeTriple{
-		ID:   msg.Hdr.NodeID,
-		IP:   msg.Hdr.NodeIP,
-		Port: msg.Hdr.NodePort,
+		ID:   msg.Hdr.ID,
+		IP:   msg.Hdr.IP,
+		Port: msg.Hdr.Port,
 	}
-	// TODO: add to rtable asyncronously while executing handle?
-	if err := dht.update(target); err != nil {
-		dht.log(LogErr, err)
-		// Continue execution
-	}
+	dht.update(target)
+
 	switch v := msg.Payload.(type) {
 	case *core.PingPayload:
-		// Respond with ping.
 		payload := &core.PingPayload{}
 		if err := dht.send(rpcid, payload, target); err != nil {
 			dht.log(LogErr, err)
 		}
 		return
 	case *core.StorePayload:
-		// Check if we can store the value: if not, respond with an
-		// error, otherwise respond with a ping and wait for a data msg.
-		key, length := v.Key, v.Length
-		if err := dht.storer.Store(key, length, nil); err != nil {
+		if err = dht.storer.Store(v.Key, v.Length, nil); err != nil {
 			payload := &core.ErrorPayload{
-				ErrorMsg: []byte("Value already stored"),
+				Msg: []byte("Value already stored"),
 			}
 			if err = dht.send(rpcid, payload, target); err != nil {
 				dht.log(LogErr, err)
@@ -79,21 +74,23 @@ func (dht *DHT) handle(ch chan interface{}, done chan struct{}) {
 			return
 		}
 		payload := &core.PingPayload{}
-		if err := dht.send(rpcid, payload, target); err != nil {
+		if err = dht.send(rpcid, payload, target); err != nil {
 			dht.log(LogErr, err)
 			return
 		}
-		if msg, c, err = dht.recv(ch, done); err != nil {
+		if msg, err = dht.recv(ch, done); err != nil {
 			dht.log(LogErr, err)
 			return
 		}
-		defer c.Close()
-		switch v := msg.Payload.(type) {
+		// TODO: check close value
+		defer msg.Close()
+		switch v2 := msg.Payload.(type) {
 		case *core.DataPayload:
-			if v.Length != length {
+			if v2.Length != v.Length {
+				dht.log(LogWarning, "DATA length didn't match STORE length")
 				return
 			}
-			if err := dht.storer.Store(key, length, v.Value); err != nil {
+			if err = dht.storer.Store(v.Key, v.Length, v2.Value); err != nil {
 				dht.log(LogErr, err)
 			}
 			return
@@ -102,18 +99,18 @@ func (dht *DHT) handle(ch chan interface{}, done chan struct{}) {
 			return
 		}
 	case *core.FindNodePayload:
-		// Respond with list of nodes, or error.
 		if v.Count > k {
+			// TODO: log
 			v.Count = k
 		} else if v.Count == 0 {
-			dht.log(LogNotice, "recv find node with zero count")
+			dht.log(LogDebug, "recv find node with zero count")
 			return
 		}
 		closest, err := dht.rtable.Closest(v.Target, k)
 		if err != nil {
 			dht.log(LogErr, err)
 			payload := &core.ErrorPayload{
-				ErrorMsg: []byte("Failed to find nodes"),
+				Msg: []byte("Failed to find nodes"),
 			}
 			if err = dht.send(rpcid, payload, target); err != nil {
 				dht.log(LogErr, err)
@@ -128,15 +125,14 @@ func (dht *DHT) handle(ch chan interface{}, done chan struct{}) {
 		}
 		return
 	case *core.FindValuePayload:
-		// Respond with value if we have it, otherwise respond with list
-		// of closest nodes.
+		id := v.Key[:core.NodeIDSize]
 		value, length, err := dht.storer.Load(v.Key)
 		if err != nil {
-			closest, err := dht.rtable.Closest(v.Key, k)
+			closest, err := dht.rtable.Closest(id, k)
 			if err != nil {
 				dht.log(LogErr, err)
 				payload := &core.ErrorPayload{
-					ErrorMsg: []byte("Failed to find nodes"),
+					Msg: []byte("Failed to find nodes"),
 				}
 				if err = dht.send(rpcid, payload, target); err != nil {
 					dht.log(LogErr, err)
@@ -151,6 +147,7 @@ func (dht *DHT) handle(ch chan interface{}, done chan struct{}) {
 			}
 			return
 		}
+		// TODO: check close value
 		defer value.Close()
 		payload := &core.DataPayload{
 			Length: length,

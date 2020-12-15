@@ -7,22 +7,17 @@ import (
 	"sync"
 )
 
+// LogLevel is the priority of an event
 type LogLevel int
 
 func (l LogLevel) String() string {
 	switch l {
-	case LogEmerg:
-		return "EMERG"
-	case LogAlert:
-		return "ALERT"
-	case LogCrit:
-		return "CRIT"
+	//case LogCrit:
+	//	return "CRIT"
 	case LogErr:
 		return "ERR"
 	case LogWarning:
 		return "WARNING"
-	case LogNotice:
-		return "NOTICE"
 	case LogInfo:
 		return "INFO"
 	case LogDebug:
@@ -32,57 +27,69 @@ func (l LogLevel) String() string {
 	}
 }
 
-// XXX: clean up / narrow down
-// Log levels, based on OpenBSD syslog(3)
+// TODO: ensure all logging follows these categories
+// Log levels
 const (
-	LogEmerg LogLevel = iota
-	LogAlert
-	LogCrit
-	LogErr
-	LogWarning
-	LogNotice
-	LogInfo
-	LogDebug
+	//LogCrit    LogLevel = iota // Critical error, requiring DHT to exit
+	LogErr     LogLevel = iota // Error with DHT
+	LogWarning                 // Error from external request
+	LogInfo                    // DHT operation information
+	LogDebug                   // Debug details
 )
 
+// Logger records events of varying importance.
 type Logger interface {
 	Log(level LogLevel, a ...interface{})
 	Logf(level LogLevel, format string, a ...interface{})
 }
 
-type defaultLogger struct {
-	mu sync.Mutex
+type consoleLogger struct {
+	minLevel LogLevel
+	mu       sync.Mutex
 }
 
-var _ Logger = &defaultLogger{}
+// NewConsoleLogger records logs to the console: stdout if level >= LogInfo,
+// otherwise stderr.
+func NewConsoleLogger(min LogLevel) Logger {
+	return &consoleLogger{minLevel: min}
+}
 
-func (l *defaultLogger) Log(level LogLevel, a ...interface{}) {
-	defer recover()
+var _ Logger = &consoleLogger{}
+
+func (l *consoleLogger) Log(level LogLevel, a ...interface{}) {
+	defer func() {
+		_ = recover()
+	}()
+	if level > l.minLevel {
+		return
+	}
 	var out io.Writer
 	switch {
-	case level >= LogWarning && level <= LogDebug:
+	case level >= LogInfo:
 		out = os.Stdout
 	default:
 		out = os.Stderr
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	fmt.Fprint(out, level.String()+": ")
-	fmt.Fprintln(out, a...)
+	fmt.Fprintf(out, "%s: %s", level, fmt.Sprintln(a...))
 }
 
-func (l *defaultLogger) Logf(level LogLevel, format string, a ...interface{}) {
-	defer recover()
+func (l *consoleLogger) Logf(level LogLevel, format string, a ...interface{}) {
+	defer func() {
+		_ = recover()
+	}()
+	if level > l.minLevel {
+		return
+	}
 	var out io.Writer
 	switch {
-	case level >= LogWarning && level <= LogDebug:
+	case level >= LogInfo:
 		out = os.Stdout
 	default:
 		out = os.Stderr
 	}
-	// TODO: safe to add directly to format string? pre-sprintf it?
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	fmt.Fprint(out, level.String()+": ")
-	fmt.Fprintf(out, format, a...)
+	fmt.Fprintf(out, "%s: %s\n", level, fmt.Sprintf(format, a...))
 }

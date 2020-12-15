@@ -2,9 +2,7 @@ package dht
 
 import (
 	"bytes"
-	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"net"
@@ -15,25 +13,48 @@ import (
 	"time"
 
 	"github.com/esote/dht/core"
+	"github.com/esote/dht/find"
 	"github.com/esote/dht/rtable"
 	"github.com/esote/dht/session"
 	"github.com/esote/dht/util"
 	"github.com/esote/enc"
+	"github.com/esote/util/pool"
 )
 
 const (
-	k                = 20
-	maxSessions      = 4096 // max active sessions
-	maxListeners     = 2    // listen to UDP and TCP at the same time
-	maxFindWorkers   = 3    // max concurrent find workers (alpha from paper)
-	maxFindHeapSize  = 1000 // max node count in find heap backlog
-	netAcceptTimeout = 100 * time.Millisecond
+	k     = 32
+	alpha = 3
+
+	maxSessions  = 4096 // max active sessions
+	maxListeners = 2    // listen to UDP and TCP at the same time
+
+	maxFindWorkers       = alpha
+	maxFindBacklogSize   = core.NodeIDSize * 8 * k
+	maxFindReturn        = k
+	maxFindUniqueHistory = maxFindBacklogSize
+
+	maxUpdateWorkers = 5    // concurrent rtable updates
+	maxUpdateBacklog = 1024 // queued rtable updates
+
+	netAcceptTimeout = 250 * time.Millisecond
 )
 
 const (
 	open int32 = iota
 	closed
 )
+
+type DHTConfig struct {
+	NetworkID     []byte
+	Dir           string
+	Password      []byte
+	Storer        Storer
+	Logger        Logger
+	IP            net.IP
+	Port          uint16
+	FixedTimeout  time.Duration // Timeout for fixed-length messages
+	StreamTimeout time.Duration // Timeout for stream messages
+}
 
 type DHT struct {
 	storer Storer
@@ -42,6 +63,8 @@ type DHT struct {
 
 	fixedTimeout  time.Duration
 	streamTimeout time.Duration
+
+	networkId []byte
 
 	self *core.NodeTriple
 	priv []byte
@@ -55,31 +78,26 @@ type DHT struct {
 	udp       *net.UDPConn
 	done      chan struct{}
 
-	finders map[*finder]bool
+	finders map[*find.Finder]bool
 	findmu  sync.Mutex
 	findwg  sync.WaitGroup
 
-	state int32 // atomic int used to close handlers
-}
+	updatePool *pool.Pool
 
-type DHTConfig struct {
-	Dir           string
-	Password      []byte
-	Storer        Storer
-	Logger        Logger
-	IP            net.IP
-	Port          uint16
-	FixedTimeout  time.Duration // Timeout for fixed-length messages
-	StreamTimeout time.Duration // Timeout for stream messages
+	state int32 // atomic int used to close handlers
 }
 
 func NewDHT(config *DHTConfig) (*DHT, error) {
 	if config == nil {
 		return nil, errors.New("dht: config is nil")
 	}
+	if len(config.NetworkID) != core.NetworkIDSize ||
+		bytes.Equal(config.NetworkID, []byte{0, 0, 0, 0}) {
+		return nil, errors.New("dht: network ID missing or invalid")
+	}
 	logger := config.Logger
 	if logger == nil {
-		logger = &defaultLogger{}
+		logger = NewConsoleLogger(LogInfo)
 	}
 	config.Dir = filepath.Clean(config.Dir)
 	info, err := os.Stat(config.Dir)
@@ -94,7 +112,7 @@ func NewDHT(config *DHTConfig) (*DHT, error) {
 		logger.Log(LogInfo, "creating new keypair")
 		publ, priv, x, err = createKeypair(config.Dir, config.Password)
 		logger.Log(LogInfo, "keypair created")
-	} else {
+	} else if err == nil {
 		logger.Log(LogInfo, "loaded existing config")
 	}
 	if err != nil {
@@ -113,25 +131,29 @@ func NewDHT(config *DHTConfig) (*DHT, error) {
 		logger:        logger,
 		fixedTimeout:  config.FixedTimeout,
 		streamTimeout: config.StreamTimeout,
+		networkId:     config.NetworkID,
 		self: &core.NodeTriple{
 			ID:   publ,
 			IP:   config.IP,
 			Port: config.Port,
 		},
-		priv:    priv,
-		x:       x,
-		done:    make(chan struct{}, maxListeners),
-		finders: make(map[*finder]bool),
-		state:   open,
+		priv:       priv,
+		x:          x,
+		done:       make(chan struct{}, maxListeners),
+		finders:    make(map[*find.Finder]bool),
+		updatePool: pool.New(maxUpdateWorkers, maxUpdateBacklog),
+		state:      open,
 	}
-	dht.logf(LogInfo, "self %s %s %d\n", hex.EncodeToString(dht.self.ID),
-		dht.self.IP, dht.self.Port)
+	dht.log(LogInfo, "self", nodeToString(dht.self))
 	dht.rtable, err = rtable.NewRTable(publ, k, config.Dir)
 	if err != nil {
 		_ = dht.Close()
 		return nil, err
 	}
 	dht.sman = session.NewManager(maxSessions, dht.handlerFunc)
+	// TODO: OpenBSD requires opening separate tcp6 & udp6 listeners
+	// TODO: OpenBSD doesn't support IPv4 mapped IPv6 addresses, always
+	// convert to unmapped address where possible
 	dht.tcp, err = net.ListenTCP("tcp", &net.TCPAddr{
 		Port: int(config.Port),
 	})
@@ -161,14 +183,14 @@ func (dht *DHT) logf(level LogLevel, format string, a ...interface{}) {
 	dht.logger.Logf(level, format, a...)
 }
 
-func (dht *DHT) addFinder(f *finder) {
+func (dht *DHT) addFinder(f *find.Finder) {
 	dht.findwg.Add(1)
 	dht.findmu.Lock()
 	defer dht.findmu.Unlock()
 	dht.finders[f] = true
 }
 
-func (dht *DHT) removeFinder(f *finder) {
+func (dht *DHT) removeFinder(f *find.Finder) {
 	defer dht.findwg.Done()
 	dht.findmu.Lock()
 	defer dht.findmu.Unlock()
@@ -183,33 +205,25 @@ type Rereader interface {
 
 /*
 	XXX: use multiwriter with buffered pipe, rather than Rereader
-
-	XXX: limit size of map / when to halt querying b/c of too much
-	memory usage
 */
 func (dht *DHT) Store(key []byte, length uint64, value Rereader) error {
 	if len(key) != core.KeySize {
 		return errors.New("invalid key")
 	}
-	unique := make(map[string]bool)
-	unique[string(dht.self.ID)] = true
-	cfg := &findConfig{
-		Start:   []*core.NodeTriple{dht.self},
-		Target:  key,
-		K:       k,
-		Workers: maxFindWorkers,
-		Max:     maxFindHeapSize,
+	id := key[:core.NodeIDSize]
+	cfg := &find.Config{
+		Start:            []*core.NodeTriple{dht.self},
+		Target:           id,
+		Workers:          maxFindWorkers,
+		MaxBacklogSize:   maxFindBacklogSize,
+		MaxReturn:        maxFindReturn,
+		MaxUniqueHistory: maxFindUniqueHistory,
 		Query: func(target *core.NodeTriple) []*core.NodeTriple {
-			closest, err := dht.queryStore(key, target, unique)
-			if err != nil {
-				dht.log(LogErr, err)
-				return nil
-			}
-			return closest
+			return dht.findNode(id, target)
 		},
 	}
 
-	f, err := find(cfg)
+	f, err := find.Find(cfg)
 	if err != nil {
 		return err
 	}
@@ -219,185 +233,65 @@ func (dht *DHT) Store(key []byte, length uint64, value Rereader) error {
 	dht.removeFinder(f)
 
 	if len(closest) == 0 {
-		return errors.New("no nearby nodes found")
+		return errors.New("no nodes found")
 	}
-	dht.logf(LogDebug, "storing in %d nodes\n", len(closest))
+	dht.logf(LogDebug, "storing in %d nodes", len(closest))
 	// Ask all nodes closest to key to store the value
 	for _, n := range closest {
 		v, err := value.Next()
 		if err != nil {
 			return err
 		}
-		dht.logf(LogInfo, "storing %s %s %d\n",
-			hex.EncodeToString(n.ID), n.IP, n.Port)
+		// TODO: check close value
+		defer v.Close() // TODO: close earlier
+		dht.log(LogDebug, "storing in", nodeToString(n))
 		if bytes.Equal(n.ID, dht.self.ID) {
-			err = dht.storer.Store(key, length, v)
-		} else {
-			err = dht.askStore(n, key, length, v)
-		}
-		if err != nil {
-			dht.log(LogErr, err)
-			// Continue execution
-		}
-	}
-	return nil
-}
-
-func (dht *DHT) queryStore(key []byte, target *core.NodeTriple, unique map[string]bool) ([]*core.NodeTriple, error) {
-	var closest []*core.NodeTriple
-	var err error
-	if bytes.Equal(target.ID, dht.self.ID) {
-		closest, err = dht.rtable.Closest(key, k)
-		if err != nil {
-			return nil, err
-		}
-		dht.logf(LogDebug, "got %d nodes from self\n", len(closest))
-	} else {
-		rpcid, ch, done, hc, err := dht.newHandler()
-		if err != nil {
-			return nil, err
-		}
-		defer hc.Close()
-
-		fnode := &core.FindNodePayload{
-			Count:  k,
-			Target: key,
-		}
-		if err = dht.send(rpcid, fnode, target); err != nil {
-			return nil, nil
-		}
-
-		msg, c, err := dht.recv(ch, done)
-		if err != nil {
-			return nil, err
-		}
-		defer c.Close()
-		switch v := msg.Payload.(type) {
-		case *core.FindNodeRespPayload:
-			dht.logf(LogDebug, "got %d nodes\n", len(v.Nodes))
-			closest = v.Nodes
-			err = dht.update(&core.NodeTriple{
-				ID:   msg.Hdr.NodeID,
-				IP:   msg.Hdr.NodeIP,
-				Port: msg.Hdr.NodePort,
-			})
-			if err != nil {
+			if err = dht.storer.Store(key, length, v); err != nil {
 				dht.log(LogErr, err)
 				// Continue execution
 			}
-		case *core.ErrorPayload:
-			return nil, errors.New(string(v.ErrorMsg))
-		default:
-			return nil, errors.New("received unexpected payload type")
-		}
-	}
-	if len(closest) > k {
-		dht.logf(LogDebug, "discarding %d nodes", len(closest)-k)
-		closest = closest[:k]
-	}
-	var i int
-	for _, n := range closest {
-		dht.logf(LogDebug, "%s %s %d\n", hex.EncodeToString(n.ID), n.IP,
-			n.Port)
-		if !unique[string(n.ID)] {
-			unique[string(n.ID)] = true
-			closest[i] = n
-			i++
 		} else {
-			dht.logf(LogDebug, "%s already found\n",
-				hex.EncodeToString(n.ID))
+			if !dht.askStore(n, key, length, v) {
+				dht.log(LogWarning, "unable to store in",
+					nodeToString(n))
+			}
 		}
-
 	}
-	for j := i; j < len(closest); j++ {
-		closest[j] = nil
-	}
-	return closest[:i], nil
-}
-
-func (dht *DHT) askStore(node *core.NodeTriple, key []byte, length uint64, value io.Reader) error {
-	rpcid, ch, done, hc, err := dht.newHandler()
-	if err != nil {
-		return err
-	}
-	defer hc.Close()
-
-	store := &core.StorePayload{
-		Key:    key,
-		Length: length,
-	}
-	if err := dht.send(rpcid, store, node); err != nil {
-		return err
-	}
-
-	msg, c, err := dht.recv(ch, done)
-	if err != nil {
-		return err
-	}
-	defer c.Close()
-	switch v := msg.Payload.(type) {
-	case *core.PingPayload:
-		break
-	case *core.ErrorPayload:
-		return errors.New(string(v.ErrorMsg))
-	default:
-		return errors.New("received unexpected payload type")
-	}
-	err = dht.update(&core.NodeTriple{
-		ID:   msg.Hdr.NodeID,
-		IP:   msg.Hdr.NodeIP,
-		Port: msg.Hdr.NodePort,
-	})
-	if err != nil {
-		dht.log(LogErr, err)
-		// Continue execution
-	}
-	data := &core.DataPayload{
-		Length: length,
-		Value:  value,
-	}
-	return dht.send(rpcid, data, node)
+	return nil
 }
 
 func (dht *DHT) Load(key []byte) (value io.ReadCloser, length uint64, err error) {
 	if len(key) != core.KeySize {
 		return nil, 0, errors.New("invalid key")
 	}
-	if value, length, err = dht.storer.Load(key); err == nil {
-		dht.logf(LogInfo, "file %s found locally\n",
-			hex.EncodeToString(key))
-		return
-	}
-	unique := make(map[string]bool)
-	unique[string(dht.self.ID)] = true
-	var found int32 = 0
+	var found int32 = open
 	var data *core.DataPayload
 	var c io.Closer
-	cfg := &findConfig{
-		Start:   []*core.NodeTriple{dht.self},
-		Target:  key,
-		K:       k,
-		Workers: maxFindWorkers,
-		Max:     maxFindHeapSize,
+	id := key[:core.NodeIDSize]
+	cfg := &find.Config{
+		Start:            []*core.NodeTriple{dht.self},
+		Target:           id,
+		Workers:          maxFindWorkers,
+		MaxBacklogSize:   maxFindBacklogSize,
+		MaxReturn:        maxFindReturn,
+		MaxUniqueHistory: maxFindUniqueHistory,
 		Query: func(target *core.NodeTriple) []*core.NodeTriple {
-			closest, ldata, lc, err := dht.queryLoad(key, target, unique)
-			if err != nil {
-				dht.log(LogErr, err)
+			if atomic.LoadInt32(&found) == closed {
 				return nil
 			}
-			if ldata != nil {
-				if atomic.CompareAndSwapInt32(&found, open, closed) {
-					data = ldata
-					c = lc
-				} else {
-					_ = lc.Close()
+			closest, data2, c2 := dht.findValue(key, target)
+			if data2 != nil {
+				if !atomic.CompareAndSwapInt32(&found, open, closed) {
+					return nil
 				}
+				data, c = data2, c2
+				return []*core.NodeTriple{{ID: id}}
 			}
 			return closest
 		},
 	}
 
-	f, err := find(cfg)
+	f, err := find.Find(cfg)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -412,91 +306,6 @@ func (dht *DHT) Load(key []byte) (value io.ReadCloser, length uint64, err error)
 	return util.JoinReadCloser(data.Value, c), data.Length, nil
 }
 
-func (dht *DHT) queryLoad(key []byte, target *core.NodeTriple, unique map[string]bool) ([]*core.NodeTriple, *core.DataPayload, io.Closer, error) {
-	var closest []*core.NodeTriple
-	var data *core.DataPayload
-
-	if bytes.Equal(target.ID, dht.self.ID) {
-		value, length, err := dht.storer.Load(key)
-		if err != nil {
-			closest, err := dht.rtable.Closest(key, k)
-			if err != nil {
-				return nil, nil, nil, err
-			}
-			return closest, nil, nil, nil
-		}
-		return nil, &core.DataPayload{
-			Length: length,
-			Value:  value,
-		}, value, nil
-	}
-	rpcid, ch, done, hc, err := dht.newHandler()
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	defer hc.Close()
-
-	fval := &core.FindValuePayload{
-		Key: key,
-	}
-	if err := dht.send(rpcid, fval, target); err != nil {
-		return nil, nil, nil, err
-	}
-
-	msg, c, err := dht.recv(ch, done)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	if msg.Hdr.MsgType != core.TypeData {
-		// When msg is TypeData, c is returned as the value closer.
-		defer c.Close()
-	}
-
-	switch v := msg.Payload.(type) {
-	case *core.DataPayload:
-		data = v
-		closest = []*core.NodeTriple{{ID: key}}
-	case *core.FindNodeRespPayload:
-		if len(v.Nodes) > k {
-			dht.logf(LogDebug, "discarding %d nodes\n",
-				len(v.Nodes)-k)
-			v.Nodes = v.Nodes[:k]
-		}
-		var i int
-		for _, n := range v.Nodes {
-			dht.logf(LogDebug, "%s %s %d\n",
-				hex.EncodeToString(n.ID), n.IP,
-				n.Port)
-			if !unique[string(n.ID)] {
-				unique[string(n.ID)] = true
-				v.Nodes[i] = n
-				i++
-			} else {
-				dht.logf(LogDebug, "%s already found\n",
-					hex.EncodeToString(n.ID))
-			}
-		}
-		for j := i; j < len(v.Nodes); j++ {
-			v.Nodes[j] = nil
-		}
-		closest = v.Nodes[:i]
-	case *core.ErrorPayload:
-		return nil, nil, nil, errors.New(string(v.ErrorMsg))
-	default:
-		fmt.Println("here1", msg.Hdr.MsgType)
-		return nil, nil, nil, errors.New("received unexpected payload type")
-	}
-	err = dht.update(&core.NodeTriple{
-		ID:   msg.Hdr.NodeID,
-		IP:   msg.Hdr.NodeIP,
-		Port: msg.Hdr.NodePort,
-	})
-	if err != nil {
-		dht.log(LogErr, err)
-	}
-	return closest, data, c, nil
-}
-
 func (dht *DHT) Bootstrap(id []byte, ip net.IP, port uint16) error {
 	target := &core.NodeTriple{
 		ID:   id,
@@ -507,6 +316,7 @@ func (dht *DHT) Bootstrap(id []byte, ip net.IP, port uint16) error {
 	if err != nil {
 		return err
 	}
+	// TODO: check close value
 	defer hc.Close()
 
 	fnode := &core.FindNodePayload{
@@ -517,11 +327,14 @@ func (dht *DHT) Bootstrap(id []byte, ip net.IP, port uint16) error {
 		return err
 	}
 
-	msg, c, err := dht.recv(ch, done)
+	msg, err := dht.recv(ch, done)
 	if err != nil {
 		return err
 	}
-	defer c.Close()
+	// Close immediately, no stream message expected.
+	if err = msg.Close(); err != nil {
+		return err
+	}
 	switch v := msg.Payload.(type) {
 	case *core.FindNodeRespPayload:
 		if len(v.Nodes) > 0 && bytes.Equal(v.Nodes[0].ID, dht.self.ID) {
@@ -531,18 +344,13 @@ func (dht *DHT) Bootstrap(id []byte, ip net.IP, port uint16) error {
 		if len(v.Nodes) > k {
 			v.Nodes = v.Nodes[:k]
 		}
-		if err := dht.update(target); err != nil {
-			return err
-		}
+		dht.update(target)
 		for _, n := range v.Nodes {
-			if err := dht.update(n); err != nil {
-				dht.log(LogErr, err)
-				// Continue execution
-			}
+			dht.update(n)
 		}
 		return nil
 	case *core.ErrorPayload:
-		return errors.New(string(v.ErrorMsg))
+		return errors.New(string(v.Msg))
 	default:
 		return errors.New("received unexpected payload type")
 	}
@@ -559,16 +367,6 @@ func (dht *DHT) Close() error {
 	dht.listeners.Wait()
 	close(dht.done)
 	var err error
-	if dht.tcp != nil {
-		if err2 := dht.tcp.Close(); err == nil {
-			err = err2
-		}
-	}
-	if dht.udp != nil {
-		if err2 := dht.udp.Close(); err == nil {
-			err = err2
-		}
-	}
 
 	// Halt running sessions.
 	if dht.sman != nil {
@@ -587,6 +385,23 @@ func (dht *DHT) Close() error {
 	}
 	dht.findmu.Unlock()
 	dht.findwg.Wait()
+
+	// Disconnect existing connections.
+	if dht.tcp != nil {
+		if err2 := dht.tcp.Close(); err == nil {
+			err = err2
+		}
+	}
+	if dht.udp != nil {
+		if err2 := dht.udp.Close(); err == nil {
+			err = err2
+		}
+	}
+
+	// Stop trying to update RTable.
+	if dht.updatePool != nil {
+		dht.updatePool.Close(false)
+	}
 
 	// Close rtable kbucket SQLite3 databases.
 	if dht.rtable != nil {
@@ -619,14 +434,21 @@ func (dht *DHT) listenUDP() {
 		}
 		var msg core.Message
 		if err = msg.UnmarshalFixed(buf[:n], dht.priv); err != nil {
-			dht.log(LogNotice, err)
+			dht.log(LogWarning, err)
+			continue
+		}
+		if !bytes.Equal(msg.Hdr.NetworkID, dht.networkId) {
+			// Drop message
 			continue
 		}
 		// XXX: verify remote addr matches msg addr?
 		_ = addr
-		if err = dht.enqueue(&msg, nil); err != nil {
+		err = dht.sman.Enqueue(&session.MessageCloser{
+			Message: &msg,
+			Closer:  &nopCloser{},
+		})
+		if err != nil {
 			dht.log(LogErr, err)
-			continue
 		}
 	}
 }
@@ -651,20 +473,30 @@ func (dht *DHT) listenTCP() {
 			continue
 		}
 		if err = conn.SetDeadline(time.Now().Add(dht.streamTimeout)); err != nil {
+			_ = conn.Close()
 			dht.log(LogErr, err)
 			continue
 		}
 		var msg core.Message
 		if err = msg.UnmarshalStream(conn, dht.priv); err != nil {
-			dht.log(LogNotice, err)
+			_ = conn.Close()
+			dht.log(LogWarning, err)
+			continue
+		}
+		if !bytes.Equal(msg.Hdr.NetworkID, dht.networkId) {
+			// Drop message
 			continue
 		}
 		// XXX: verify remote addr matches msg addr?
 		// TODO: ensure conn is always closed in handler eventually,
 		// even if session expires or sman is closed
-		if err = dht.enqueue(&msg, conn); err != nil {
+		err = dht.sman.Enqueue(&session.MessageCloser{
+			Message: &msg,
+			Closer:  conn,
+		})
+		if err != nil {
+			_ = conn.Close()
 			dht.log(LogErr, err)
-			continue
 		}
 	}
 }

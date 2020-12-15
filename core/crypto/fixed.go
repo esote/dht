@@ -9,19 +9,13 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/curve25519"
 	"golang.org/x/crypto/hkdf"
-	"golang.org/x/crypto/poly1305"
 )
 
-const (
-	nonceSize    = chacha20poly1305.NonceSizeX
-	overheadSize = poly1305.TagSize
-)
-
-func FixedLength(l int) int {
-	return l + curve25519.ScalarSize + sha512.Size + nonceSize +
-		overheadSize
-}
-
+// EncryptFixed follows the general encryption pattern given in the package
+// description. The AEAD nonce is randomly generated.
+//
+// Ciphertext size = len(plantext) + curve25519.ScalarSize + sha512.Size +
+// chacha20poly1305.NonceSizeX + poly1305.TagSize.
 func EncryptFixed(plaintext, publ []byte) ([]byte, error) {
 	if len(publ) != curve25519.ScalarSize {
 		return nil, errors.New("bad publ length")
@@ -75,6 +69,7 @@ func EncryptFixed(plaintext, publ []byte) ([]byte, error) {
 	return aead.Seal(out[:off], nonce, plaintext, nil), nil
 }
 
+// DecryptFixed decrypts a ciphertext which was encrypted using EncryptFixed.
 func DecryptFixed(ciphertext, priv []byte) ([]byte, error) {
 	if len(priv) != curve25519.ScalarSize {
 		return nil, errors.New("bad priv length")

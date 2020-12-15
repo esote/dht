@@ -1,11 +1,10 @@
 === TODO ===
 
-rtable - check NodeID sizes
-kbucket - check NodeID sizes
 storer - check Key sizes
 
-maybe keep full key 64 bytes when sending requests, but only use last 32 for LCP
-XOR metric.
+test storer race conditions
+
+storer - expire files after a certain time
 
 Review papers listed in PAPERS.
 

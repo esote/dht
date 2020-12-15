@@ -10,6 +10,7 @@ import (
 	"github.com/esote/dht/core/crypto"
 )
 
+// MarshalFixed returns the fixed-format encoding of msg.
 func (msg *Message) MarshalFixed(priv, targetPubl []byte) ([]byte, error) {
 	data := make([]byte, FixedMessageSize)
 	b := data
@@ -43,7 +44,7 @@ func (msg *Message) MarshalFixed(priv, targetPubl []byte) ([]byte, error) {
 	}
 
 	// Zero-padding is implicit in uninitialized buffer space.
-	plain := make([]byte, FixedCiphertextSize-SigSize, FixedCiphertextSize)
+	plain := make([]byte, FixedCipherSize-SigSize, FixedCipherSize)
 	b = plain
 
 	copy(b, header)
@@ -74,6 +75,7 @@ func (msg *Message) MarshalFixed(priv, targetPubl []byte) ([]byte, error) {
 	return data, nil
 }
 
+// UnmarshalFixed decodes data to a fixed-format msg.
 func (msg *Message) UnmarshalFixed(data, priv []byte) error {
 	if len(data) < FixedMessageSize {
 		return errors.New("message truncated")
@@ -114,20 +116,13 @@ func (msg *Message) UnmarshalFixed(data, priv []byte) error {
 	if err = msg.Hdr.UnmarshalBinary(plain); err != nil {
 		return err
 	}
-	if msg.Hdr.Time > uint64(math.MaxInt64) {
-		return errors.New("header time too large")
+	if err = verifyHeader(msg.Hdr); err != nil {
+		return err
 	}
-	if time.Unix(int64(msg.Hdr.Time), 0).Before(time.Now().UTC()) {
-		return errors.New("message expired")
-	}
-	if !ed25519.Verify(msg.Hdr.NodeID, plain, sig) {
+	if !ed25519.Verify(msg.Hdr.ID, plain, sig) {
 		return errors.New("signature invalid")
 	}
 	plain = plain[HeaderSize:]
-
-	if !VerifyNodeID(msg.Hdr.NodeID, msg.Hdr.PuzDynX) {
-		return errors.New("message node ID invalid")
-	}
 
 	switch msg.Hdr.MsgType {
 	case TypePing:
@@ -164,6 +159,7 @@ func (msg *Message) UnmarshalFixed(data, priv []byte) error {
 	return nil
 }
 
+// MarshalStream writes the stream-format encoding of msg to w.
 func (msg *Message) MarshalStream(w io.Writer, priv, targetPubl []byte) error {
 	data := make([]byte, PreBodySize)
 	b := data
@@ -191,7 +187,7 @@ func (msg *Message) MarshalStream(w io.Writer, priv, targetPubl []byte) error {
 		return err
 	}
 
-	wc, err := crypto.NewWriter(w, xpubl, StreamCiphertextBlockSize)
+	wc, err := crypto.NewWriter(w, xpubl, StreamCipherBlockSize)
 	if err != nil {
 		return err
 	}
@@ -220,6 +216,7 @@ func (msg *Message) MarshalStream(w io.Writer, priv, targetPubl []byte) error {
 	return wc.Close()
 }
 
+// UnmarshalStream decodes from stream-format r to msg.
 func (msg *Message) UnmarshalStream(r io.Reader, priv []byte) error {
 	data := make([]byte, PreBodySize)
 	if _, err := io.ReadFull(r, data); err != nil {
@@ -247,7 +244,7 @@ func (msg *Message) UnmarshalStream(r io.Reader, priv []byte) error {
 		return err
 	}
 
-	r, err = crypto.NewReader(r, xpriv, StreamCiphertextBlockSize)
+	r, err = crypto.NewReader(r, xpriv, StreamCipherBlockSize)
 	if err != nil {
 		return err
 	}
@@ -261,13 +258,10 @@ func (msg *Message) UnmarshalStream(r io.Reader, priv []byte) error {
 	if err = msg.Hdr.UnmarshalBinary(header); err != nil {
 		return err
 	}
-	if msg.Hdr.Time > uint64(math.MaxInt64) {
-		return errors.New("header time too large")
+	if err = verifyHeader(msg.Hdr); err != nil {
+		return err
 	}
-	if time.Unix(int64(msg.Hdr.Time), 0).Before(time.Now().UTC()) {
-		return errors.New("message expired")
-	}
-	if !ed25519.Verify(msg.Hdr.NodeID, header, sig) {
+	if !ed25519.Verify(msg.Hdr.ID, header, sig) {
 		return errors.New("signature invalid")
 	}
 
@@ -285,5 +279,18 @@ func (msg *Message) UnmarshalStream(r io.Reader, priv []byte) error {
 		return err
 	}
 
+	return nil
+}
+
+func verifyHeader(hdr *Header) error {
+	if hdr.Time > uint64(math.MaxInt64) {
+		return errors.New("header time too large")
+	}
+	if time.Unix(int64(hdr.Time), 0).Before(time.Now().UTC()) {
+		return errors.New("header expired")
+	}
+	if !VerifyNodeID(hdr.ID, hdr.PuzDynX) {
+		return errors.New("node ID invalid")
+	}
 	return nil
 }

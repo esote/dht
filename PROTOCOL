@@ -79,7 +79,7 @@
 
 	Format:
 
-		HEADER [159 bytes]
+		HEADER [163 bytes]
 
 			Message header. See "Message header format"
 
@@ -148,7 +148,7 @@
 
 	Format:
 
-		HEADER [159 bytes]
+		HEADER [163 bytes]
 
 			Message header. See "Message header format"
 
@@ -168,6 +168,13 @@
 
 	Format:
 
+		NETWORK_ID [4 bytes]
+
+			Network identifier. Nodes may only communicate if they
+			share the same network identifier, messages with a
+			different identifier are dropped. The network identifier
+			must not be empty (all zero bytes).
+
 		MSG_TYPE [1 byte]
 
 			Payload type.
@@ -181,7 +188,7 @@
 			5	FIND_VALUE	fixed
 			6	ERROR		fixed
 
-		NODE_ID [32 bytes]
+		ID [32 bytes]
 
 			Ed25519 public key of the sending node. See the section
 			"Node ID generation".
@@ -191,12 +198,12 @@
 			Value "x" used to solve the dynamic crypto puzzle. See
 			the section "Node ID generation".
 
-		NODE_IP [16 bytes]
+		IP [16 bytes]
 
 			IPv6 address of the node sending the message. For IPv4
 			addresses, use an IPv4-mapped IPv6 address.
 
-		NODE_PORT [2 bytes]
+		PORT [2 bytes]
 
 			Unsigned integer network port the node is listening on.
 
@@ -228,7 +235,7 @@
 
 	Format:
 
-		KEY [32 bytes]
+		KEY [64 bytes]
 
 			Identifier for the value of the key-value pair. See the
 			section "Key ID generation" for details on how this is
@@ -290,15 +297,15 @@
 			has completed the crypto puzzles detailed in the section
 			"Node ID generation". Node triple format:
 
-				NODE_ID [32 bytes]
+				ID [32 bytes]
 
 					Node identifier.
 
-				NODE_IP [16 bytes]
+				IP [16 bytes]
 
 					IP address of the node in IPv6 format.
 
-				NODE_PORT [2 bytes]
+				PORT [2 bytes]
 
 					Unsigned integer network port of the
 					node.
@@ -312,7 +319,7 @@
 
 	Format:
 
-		KEY [32 bytes]
+		KEY [64 bytes]
 
 			Identifier for the value of the key-value pair. See the
 			section "Key ID generation" for details on how this is
@@ -328,10 +335,10 @@
 
 		LENGTH [1 byte]
 
-			Length of ERROR_MSG as an unsigned integer. LENGTH must
+			Length of MSG as an unsigned integer. LENGTH must
 			be nonzero.
 
-		ERROR_MSG [LENGTH bytes]
+		MSG [LENGTH bytes]
 
 			The error value.
 
@@ -341,9 +348,9 @@
 	puzzles". Let PK be an Ed25519 public key. PK is a valid node identifier
 	if and only if:
 
-	a) H(H(PK)) has 2 leading zero bits, where H is SHA-512.
+	a) H(H(PK)) has 23 leading zero bits, where H is SHA-512.
 
-	b) A random 64-byte value X is found such that H(H(PK) xor X) has 2
+	b) A random 64-byte value X is found such that H(H(PK) xor X) has 24
 	leading zero bits, where H is SHA3-512.
 
 	This scheme provides a few benefits:
@@ -355,13 +362,14 @@
 
 15. Key ID generation
 
-	Keys, as used in key-value pairs, are the last 32 bytes of the SHA-512
-	hash of their corresponding value.
+	Key IDs, as used in key-value pairs, are the SHA-512 hash of their
+	corresponding value. When comparing node and key IDs, the last 32 bytes
+	of the key are used.
 
 16. Encryption
 
 	Encryption and decryption are done using a node's Ed25519 keypair
-	converted to a X25519 keypair. // TODO: describe/reference how?
+	converted to a X25519 keypair.
 
 	Fixed-size data is encrypted by generating an ephemeral X25519 keypair
 	from a random seed, then computing a shared secret using the ephemeral

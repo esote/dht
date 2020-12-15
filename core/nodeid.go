@@ -14,10 +14,12 @@ const (
 	c2 = 2 // 24
 )
 
+// NewNodeID generates a keypair where the public key (node ID) satisfies the
+// crypto puzzle constraints.
 func NewNodeID() (publ ed25519.PublicKey, priv ed25519.PrivateKey, x []byte, err error) {
+	// Static puzzle
 	h := sha512.New()
 	p := make([]byte, h.Size())
-	// Static puzzle
 	for {
 		publ, priv, err = ed25519.GenerateKey(nil)
 		if err != nil {
@@ -32,10 +34,13 @@ func NewNodeID() (publ ed25519.PublicKey, priv ed25519.PrivateKey, x []byte, err
 		if _, err = h.Write(p); err != nil {
 			return
 		}
-		if p = h.Sum(p[:0]); leadingZeros(p) == c1 {
+		if p = h.Sum(p[:0]); leadingZeros(p) >= c1 {
+			// Success
 			break
 		}
 	}
+
+	// Dynamic puzzle
 	h = sha3.New512()
 	if _, err = h.Write(publ); err != nil {
 		return
@@ -43,7 +48,6 @@ func NewNodeID() (publ ed25519.PublicKey, priv ed25519.PrivateKey, x []byte, err
 	p = h.Sum(p[:0])
 	x = make([]byte, h.Size())
 	p2 := make([]byte, h.Size())
-	// Dynamic puzzle
 	for {
 		if _, err = rand.Read(x); err != nil {
 			return
@@ -53,19 +57,24 @@ func NewNodeID() (publ ed25519.PublicKey, priv ed25519.PrivateKey, x []byte, err
 		if _, err = h.Write(p2); err != nil {
 			return
 		}
-		if p2 = h.Sum(p2[:0]); leadingZeros(p2) == c2 {
+		if p2 = h.Sum(p2[:0]); leadingZeros(p2) >= c2 {
 			// Success
 			return
 		}
 	}
 }
 
+// VerifyNodeID checks that a public key (node ID) satisfies the crypto puzzle
+// constraints.
 func VerifyNodeID(publ ed25519.PublicKey, x []byte) bool {
-	defer recover()
+	defer func() {
+		_ = recover()
+	}()
+
+	// Static puzzle
 	if len(publ) != ed25519.PublicKeySize {
 		return false
 	}
-	// Static puzzle
 	h := sha512.New()
 	if _, err := h.Write(publ); err != nil {
 		return false
@@ -78,6 +87,7 @@ func VerifyNodeID(publ ed25519.PublicKey, x []byte) bool {
 	if p = h.Sum(p[:0]); leadingZeros(p) < c1 {
 		return false
 	}
+
 	// Dynamic Puzzle
 	h = sha3.New512()
 	if len(x) != h.Size() {
@@ -96,7 +106,8 @@ func VerifyNodeID(publ ed25519.PublicKey, x []byte) bool {
 	return leadingZeros(p) >= c2
 }
 
-// longest common prefix
+// LCP computes the longest common prefix, in bits, between two node IDs. Panics
+// if the length of x or y is incorrect.
 func LCP(x, y []byte) int {
 	if len(x) != NodeIDSize || len(y) != NodeIDSize {
 		panic("LCP on invalid IDs")

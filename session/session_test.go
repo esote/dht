@@ -9,7 +9,7 @@ import (
 
 func TestManager(t *testing.T) {
 	const c = 3
-	ch := make(chan interface{}, c)
+	ch := make(chan *MessageCloser, c)
 	done := make(chan struct{}, c)
 	hf := func() *Handler {
 		return &Handler{
@@ -21,14 +21,14 @@ func TestManager(t *testing.T) {
 	rpcid := make([]byte, core.RPCIDSize)
 	rpcid[0] = 1
 	exp := time.Now().UTC().Add(5 * time.Second)
-	msg := core.Message{
+	msg := &core.Message{
 		Hdr: &core.Header{
 			RPCID: rpcid,
 			Time:  uint64(exp.Unix()),
 		},
 	}
 	for i := 0; i < c+1; i++ {
-		if err := m.Enqueue(string(rpcid), &msg, exp); err != nil {
+		if err := m.Enqueue(&MessageCloser{msg, nil}); err != nil {
 			t.Fatal(err)
 		}
 	}

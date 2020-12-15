@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha512"
@@ -15,27 +16,42 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
+// Most recent (supported) PROTOCOL version.
 const (
 	Version = 0
+)
 
-	PreBodySize = 1 + 1
+// Message and message field sizes.
+const (
+	PreBodySize      = 1 + 1
+	FixedMessageSize = 16384 // 2^14
+)
 
-	FixedMessageSize    = 16384 // 2^14
-	FixedCiphertextSize = 16246
+// Cryptographic field sizes.
+const (
+	FixedOverhead         = 32 + 64 + 24 + 16
+	FixedCipherSize       = FixedMessageSize - PreBodySize - FixedOverhead
+	StreamCipherBlockSize = 65536 // 2^16
+	SigSize               = ed25519.SignatureSize
+	NodeIDSize            = ed25519.PublicKeySize
+)
 
-	StreamCiphertextBlockSize = 65536
+// Header and header field sizes.
+const (
+	NetworkIDSize = 4
+	RPCIDSize     = 20
+	DynXSize      = 64 // SHA3-512 output size, checked in init
+	HdrNonceSize  = 16
 
-	RPCIDSize    = 20
-	NodeIDSize   = ed25519.PublicKeySize
-	DynXSize     = 64 // SHA3-512 output size, verified in init
-	HdrNonceSize = 16
+	HeaderSize = NetworkIDSize + 1 + NodeIDSize + DynXSize + net.IPv6len +
+		2 + RPCIDSize + 8 + HdrNonceSize
+)
 
-	HeaderSize = 1 + NodeIDSize + DynXSize + net.IPv6len + 2 + RPCIDSize +
-		8 + HdrNonceSize
+// Payload and payload field sizes.
+const (
+	KeySize = sha512.Size
 
-	KeySize        = sha512.Size / 2 // TODO: use full key, just use half when comparing
 	NodeTripleSize = NodeIDSize + net.IPv6len + 2
-	SigSize        = ed25519.SignatureSize
 
 	StorePayloadSize           = KeySize + 8
 	FindNodePayloadSize        = 1 + NodeIDSize
@@ -44,26 +60,18 @@ const (
 	ErrorPayloadMinSize        = 1 + 1
 )
 
-func init() {
-	if DynXSize != sha3.New512().Size() {
-		panic("DynXSize incorrect")
-	}
-
-	// Key and node ID size must be equal to ensure XOR metric works.
-	if KeySize != NodeIDSize {
-		panic("KeySize must equal NodeIDSize")
-	}
-}
-
+// SupportedVersions gives a hash set of supported PROTOCOL versions
 var SupportedVersions = map[uint8]bool{
 	Version: true,
 }
 
+// Supported message body kinds.
 const (
 	KindFixed uint8 = iota
 	KindStream
 )
 
+// Supported payload types.
 const (
 	TypePing uint8 = iota
 	TypeStore
@@ -74,6 +82,23 @@ const (
 	TypeError
 )
 
+func init() {
+	if FixedCipherSize != 16246 {
+		panic("Fixed ciphertext size calculation incorrect")
+	}
+
+	if DynXSize != sha3.New512().Size() {
+		panic("DynXSize incorrect")
+	}
+
+	// Node and key IDs must be comparable to ensure XOR metric works, and
+	// for that the KeySize must be at least NodeIDSize bytes.
+	if KeySize < NodeIDSize {
+		panic("KeySize must be NodeIDSize bytes")
+	}
+}
+
+// Message implements the message format.
 type Message struct {
 	Version  uint8
 	BodyKind uint8
@@ -81,27 +106,38 @@ type Message struct {
 	Payload  MessagePayload
 }
 
+// Header implements the message header format.
 type Header struct {
-	MsgType  uint8
-	NodeID   []byte
-	PuzDynX  []byte
-	NodeIP   net.IP
-	NodePort uint16
-	RPCID    []byte
-	Time     uint64
+	NetworkID []byte
+	MsgType   uint8
+	ID        []byte
+	PuzDynX   []byte
+	IP        net.IP
+	Port      uint16
+	RPCID     []byte
+	Time      uint64
 }
 
 func (hdr *Header) MarshalBinary() ([]byte, error) {
 	data := make([]byte, HeaderSize)
 	b := data
 
+	if len(hdr.NetworkID) != NetworkIDSize {
+		return nil, errors.New("network ID invalid")
+	}
+	if bytes.Equal(hdr.NetworkID, []byte{0, 0, 0, 0}) {
+		return nil, errors.New("network ID empty")
+	}
+	copy(b, hdr.NetworkID)
+	b = b[NetworkIDSize:]
+
 	b[0] = hdr.MsgType
 	b = b[1:]
 
-	if len(hdr.NodeID) != NodeIDSize {
+	if len(hdr.ID) != NodeIDSize {
 		return nil, errors.New("node ID invalid")
 	}
-	copy(b, hdr.NodeID)
+	copy(b, hdr.ID)
 	b = b[NodeIDSize:]
 
 	if len(hdr.PuzDynX) != DynXSize {
@@ -110,14 +146,14 @@ func (hdr *Header) MarshalBinary() ([]byte, error) {
 	copy(b, hdr.PuzDynX)
 	b = b[DynXSize:]
 
-	ip := hdr.NodeIP.To16()
+	ip := hdr.IP.To16()
 	if ip == nil {
 		return nil, errors.New("node IP invalid")
 	}
 	copy(b, ip)
 	b = b[net.IPv6len:]
 
-	binary.BigEndian.PutUint16(b, hdr.NodePort)
+	binary.BigEndian.PutUint16(b, hdr.Port)
 	b = b[2:]
 
 	if len(hdr.RPCID) != RPCIDSize {
@@ -143,22 +179,29 @@ func (hdr *Header) UnmarshalBinary(data []byte) error {
 		return errors.New("truncated header")
 	}
 
+	hdr.NetworkID = make([]byte, NetworkIDSize)
+	copy(hdr.NetworkID, data)
+	data = data[NetworkIDSize:]
+	if bytes.Equal(hdr.NetworkID, []byte{0, 0, 0, 0}) {
+		return errors.New("network ID empty")
+	}
+
 	hdr.MsgType = data[0]
 	data = data[1:]
 
-	hdr.NodeID = make([]byte, NodeIDSize)
-	copy(hdr.NodeID, data)
+	hdr.ID = make([]byte, NodeIDSize)
+	copy(hdr.ID, data)
 	data = data[NodeIDSize:]
 
 	hdr.PuzDynX = make([]byte, DynXSize)
 	copy(hdr.PuzDynX, data)
 	data = data[DynXSize:]
 
-	hdr.NodeIP = make([]byte, net.IPv6len)
-	copy(hdr.NodeIP, data)
+	hdr.IP = make([]byte, net.IPv6len)
+	copy(hdr.IP, data)
 	data = data[net.IPv6len:]
 
-	hdr.NodePort = binary.BigEndian.Uint16(data)
+	hdr.Port = binary.BigEndian.Uint16(data)
 	data = data[2:]
 
 	hdr.RPCID = make([]byte, RPCIDSize)
@@ -174,23 +217,31 @@ func (hdr *Header) UnmarshalBinary(data []byte) error {
 	return nil
 }
 
+// MessagePayload is used to identify the message body kind and message type of
+// a payload.
 type MessagePayload interface {
 	BodyKind() uint8
 	MsgType() uint8
 }
 
+// FixedPayload is used for fixed-format messages. FixedPayload can be
+// marshalled and unmarshalled with a fixed-size byte slice.
 type FixedPayload interface {
 	MessagePayload
 	MarshalBinary() (data []byte, err error)
 	UnmarshalBinaryN(data []byte) (n int, err error)
 }
 
+// StreamPayload is used for stream-format messages. StreamPayload can be
+// marshalled and unmarshalled with io.Writer and io.Reader streams
+// respectively.
 type StreamPayload interface {
 	MessagePayload
 	MarshalStream(w io.Writer) (err error)
 	UnmarshalStream(r io.Reader) (err error)
 }
 
+// PingPayload satisfies FixedPayload for the PING message payload format.
 type PingPayload struct {
 }
 
@@ -207,6 +258,7 @@ func (ping *PingPayload) UnmarshalBinaryN(data []byte) (int, error) {
 func (ping *PingPayload) BodyKind() uint8 { return KindFixed }
 func (ping *PingPayload) MsgType() uint8  { return TypePing }
 
+// StorePayload satisfies FixedPayload for the STORE message payload format.
 type StorePayload struct {
 	Key    []byte
 	Length uint64
@@ -248,6 +300,7 @@ func (store *StorePayload) UnmarshalBinaryN(data []byte) (int, error) {
 func (store *StorePayload) BodyKind() uint8 { return KindFixed }
 func (store *StorePayload) MsgType() uint8  { return TypeStore }
 
+// DataPayload satisfies StreamPayload for the DATA message payload format.
 type DataPayload struct {
 	Length uint64
 	Value  io.Reader
@@ -278,6 +331,8 @@ func (data *DataPayload) UnmarshalStream(r io.Reader) error {
 func (data *DataPayload) BodyKind() uint8 { return KindStream }
 func (data *DataPayload) MsgType() uint8  { return TypeData }
 
+// FindNodePayload satisfies FixedPayload for the FIND_NODE message payload
+// format.
 type FindNodePayload struct {
 	Count  uint8
 	Target []byte
@@ -319,6 +374,7 @@ func (fnode *FindNodePayload) UnmarshalBinaryN(data []byte) (int, error) {
 func (fnode *FindNodePayload) BodyKind() uint8 { return KindFixed }
 func (fnode *FindNodePayload) MsgType() uint8  { return TypeFindNode }
 
+// NodeTriple describes a node using only the fields necessary to contact it.
 type NodeTriple struct {
 	ID   []byte
 	IP   net.IP
@@ -326,6 +382,10 @@ type NodeTriple struct {
 }
 
 func (n *NodeTriple) MarshalSlice(data []byte) error {
+	if len(data) < NodeTripleSize {
+		return errors.New("slice truncated")
+	}
+
 	if len(n.ID) != NodeIDSize {
 		return errors.New("ID length invalid")
 	}
@@ -363,6 +423,8 @@ func (n *NodeTriple) UnmarshalSlice(data []byte) error {
 	return nil
 }
 
+// FindNodeRespPayload satisfies FixedPayload for the FIND_NODE_RESP message
+// payload format.
 type FindNodeRespPayload struct {
 	Nodes []*NodeTriple
 }
@@ -419,6 +481,8 @@ func (fnresp *FindNodeRespPayload) UnmarshalBinaryN(data []byte) (int, error) {
 func (fnresp *FindNodeRespPayload) BodyKind() uint8 { return KindFixed }
 func (fnresp *FindNodeRespPayload) MsgType() uint8  { return TypeFindNodeResp }
 
+// FindValuePayload satisfies FixedPayload for the FIND_VALUE message payload
+// format.
 type FindValuePayload struct {
 	Key []byte
 }
@@ -453,27 +517,28 @@ func (fval *FindValuePayload) UnmarshalBinaryN(data []byte) (int, error) {
 func (fval *FindValuePayload) BodyKind() uint8 { return KindFixed }
 func (fval *FindValuePayload) MsgType() uint8  { return TypeFindValue }
 
+// ErrorPayload satisfies FixedPayload for the ERROR message payload format.
 type ErrorPayload struct {
-	ErrorMsg []byte
+	Msg []byte
 }
 
 var _ FixedPayload = &ErrorPayload{}
 
 func (er *ErrorPayload) MarshalBinary() ([]byte, error) {
-	if len(er.ErrorMsg) == 0 {
+	if len(er.Msg) == 0 {
 		return nil, errors.New("error message too short")
 	}
-	if len(er.ErrorMsg) > math.MaxUint8 {
+	if len(er.Msg) > math.MaxUint8 {
 		return nil, errors.New("error message too long")
 	}
-	data := make([]byte, 1+len(er.ErrorMsg))
+	data := make([]byte, 1+len(er.Msg))
 	b := data
 
-	b[0] = uint8(len(er.ErrorMsg))
+	b[0] = uint8(len(er.Msg))
 	b = b[1:]
 
-	copy(b, er.ErrorMsg)
-	b = b[len(er.ErrorMsg):]
+	copy(b, er.Msg)
+	b = b[len(er.Msg):]
 
 	return data, nil
 }
@@ -490,8 +555,8 @@ func (er *ErrorPayload) UnmarshalBinaryN(data []byte) (int, error) {
 		return 0, errors.New("error message truncated")
 	}
 
-	er.ErrorMsg = make([]byte, length)
-	copy(er.ErrorMsg, data)
+	er.Msg = make([]byte, length)
+	copy(er.Msg, data)
 	data = data[length:]
 
 	return 1 + length, nil

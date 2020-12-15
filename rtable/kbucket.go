@@ -14,7 +14,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-// KBucket stores nodes in an LRU cache.
+// KBucket stores nodes in an LRU cache. KBucket is not safe for concurrent use.
 type KBucket interface {
 	// Load node by ID. If no node exists with that ID in the bucket, return
 	// ErrKBucketNotFound.
@@ -49,6 +49,7 @@ type kbucket struct {
 	k  int
 	l  *list.List
 	m  map[string]*list.Element
+	st map[string]*sql.Stmt
 }
 
 // NewKBucket constructs a SQLite3-backed KBucket.
@@ -61,7 +62,6 @@ func NewKBucket(file string, k int) (KBucket, error) {
 	query.Set("_secure_delete", "on")
 	u.RawQuery = query.Encode()
 
-	// TODO: set SQLITE_LIMIT_LENGTH to core.NodeTripleSize
 	db, err := sql.Open("sqlite3", u.String())
 	if err != nil {
 		return nil, err
@@ -75,12 +75,28 @@ func NewKBucket(file string, k int) (KBucket, error) {
 		k:  k,
 		l:  list.New(),
 		m:  make(map[string]*list.Element, k),
+		st: make(map[string]*sql.Stmt),
 	}
 
 	if err = kb.load(); err != nil {
 		_ = kb.Close()
 		return nil, err
 	}
+
+	kb.st["truncate"], err = kb.db.Prepare(`DELETE FROM "kb"`)
+	if err != nil {
+		_ = kb.Close()
+		return nil, err
+	}
+
+	kb.st["insert"], err = kb.db.Prepare(`
+INSERT INTO "kb" ("index", "data")
+VALUES (?, ?)`)
+	if err != nil {
+		_ = kb.Close()
+		return nil, err
+	}
+
 	return kb, nil
 }
 
@@ -128,23 +144,31 @@ func (kb *kbucket) Append(s []*core.NodeTriple, n int) ([]*core.NodeTriple, erro
 }
 
 func (kb *kbucket) Close() error {
-	return kb.db.Close()
+	var err error
+	for _, stmt := range kb.st {
+		if err2 := stmt.Close(); err == nil {
+			err = err2
+		}
+	}
+	if err2 := kb.db.Close(); err == nil {
+		err = err2
+	}
+	return err
 }
 
-// TODO: put queries in statements
 func (kb *kbucket) sync() error {
-	const qTruncate = `DELETE FROM kb`
-	const qInsert = `INSERT INTO kb(ind, data) VALUES (?, ?)`
 	return util.Transact(kb.db, func(tx *sql.Tx) (err error) {
-		if _, err = tx.Exec(qTruncate); err != nil {
+		if _, err = tx.Stmt(kb.st["truncate"]).Exec(); err != nil {
 			return err
 		}
+		insert := tx.Stmt(kb.st["insert"])
+		data := make([]byte, core.NodeTripleSize)
 		for e, i := kb.l.Back(), 0; e != nil; e, i = e.Prev(), i+1 {
-			data := make([]byte, core.NodeTripleSize)
-			if err = e.Value.(*core.NodeTriple).MarshalSlice(data); err != nil {
+			n := e.Value.(*core.NodeTriple)
+			if err = n.MarshalSlice(data); err != nil {
 				return err
 			}
-			if _, err = tx.Exec(qInsert, i, data); err != nil {
+			if _, err = insert.Exec(i, data); err != nil {
 				return err
 			}
 		}
@@ -153,26 +177,29 @@ func (kb *kbucket) sync() error {
 }
 
 func (kb *kbucket) load() error {
-	// TODO: "index" is reserved, using "ind" temporarily
 	const qCreate = `
-CREATE TABLE IF NOT EXISTS kb (
-	ind INTEGER PRIMARY KEY,
-	data BLOB NOT NULL
+CREATE TABLE IF NOT EXISTS "kb" (
+	"index" INTEGER PRIMARY KEY,
+	"data" BLOB NOT NULL
 )`
-	const qSelect = `SELECT data FROM kb ORDER BY ind`
-	const qTruncate = `DELETE FROM kb WHERE ind > ?`
-	return util.Transact(kb.db, func(tx *sql.Tx) error {
-		if _, err := tx.Exec(qCreate); err != nil {
+	const qSelect = `SELECT "data" FROM "kb" ORDER BY "index"`
+	const qTruncate = `DELETE FROM "kb" WHERE "index" > ?`
+	return util.Transact(kb.db, func(tx *sql.Tx) (err error) {
+		if _, err = tx.Exec(qCreate); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(qTruncate, kb.k); err != nil {
+		if _, err = tx.Exec(qTruncate, kb.k); err != nil {
 			return err
 		}
 		rows, err := tx.Query(qSelect)
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
+		defer func() {
+			if err2 := rows.Close(); err == nil {
+				err = err2
+			}
+		}()
 		for rows.Next() {
 			var data []byte
 			if err = rows.Scan(&data); err != nil {

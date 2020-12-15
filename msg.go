@@ -33,7 +33,7 @@ func msgTypeString(t uint8) string {
 }
 
 type hcloser struct {
-	ch    chan interface{}
+	ch    chan *session.MessageCloser
 	done  chan struct{}
 	rpcid string
 	dht   *DHT
@@ -47,12 +47,12 @@ func (h *hcloser) Close() error {
 	return err
 }
 
-func (dht *DHT) newHandler() ([]byte, <-chan interface{}, <-chan struct{}, io.Closer, error) {
+func (dht *DHT) newHandler() ([]byte, <-chan *session.MessageCloser, <-chan struct{}, io.Closer, error) {
 	rpcid := make([]byte, core.RPCIDSize)
 	if _, err := rand.Read(rpcid); err != nil {
 		return nil, nil, nil, nil, err
 	}
-	ch := make(chan interface{}, 1)
+	ch := make(chan *session.MessageCloser, 1)
 	done := make(chan struct{}, 1)
 	handler := &session.Handler{
 		Ch:   ch,
@@ -69,56 +69,29 @@ func (dht *DHT) newHandler() ([]byte, <-chan interface{}, <-chan struct{}, io.Cl
 	return rpcid, ch, done, &hcloser{ch, done, string(rpcid), dht}, nil
 }
 
-func (dht *DHT) recv(ch <-chan interface{}, done <-chan struct{}) (*core.Message, io.Closer, error) {
+func (dht *DHT) recv(ch <-chan *session.MessageCloser, done <-chan struct{}) (*session.MessageCloser, error) {
 	timer := time.NewTimer(dht.fixedTimeout)
 	defer timer.Stop()
 	select {
-	case v := <-ch:
-		if v == nil {
-			return nil, nil, errors.New("received nil message")
+	case msg := <-ch:
+		if msg == nil {
+			return nil, errors.New("received nil message")
 		}
-		w, ok := v.(*wrappedMsg)
-		if !ok {
-			return nil, nil, errors.New("received value of wrong type")
-		}
-		if w.c == nil {
-			w.c = nopCloser{}
-		}
-		dht.logf(LogInfo, "recv %s from %s %d\n",
-			msgTypeString(w.msg.Hdr.MsgType), w.msg.Hdr.NodeIP,
-			w.msg.Hdr.NodePort)
-		return w.msg, w.c, nil
+		dht.logf(LogInfo, "recv %s from %s %d",
+			msgTypeString(msg.Hdr.MsgType), msg.Hdr.IP,
+			msg.Hdr.Port)
+		return msg, nil
 	case <-done:
 		// Session expired and garbage-collected by session manager.
-		return nil, nil, errors.New("session expired")
+		return nil, errors.New("session expired")
 	case <-timer.C:
-		return nil, nil, errors.New("receive timeout expired")
+		return nil, errors.New("receive timeout expired")
 	}
-}
-
-// wrappedMsg encloses a message with some context.
-type wrappedMsg struct {
-	msg *core.Message
-
-	// Closer used for TCP messages to have handlers close the stream after
-	// it is used.
-	c io.Closer
 }
 
 type nopCloser struct{}
 
 func (nopCloser) Close() error { return nil }
-
-// enqueue message using wrappedMsg, c may be nil
-func (dht *DHT) enqueue(msg *core.Message, c io.Closer) error {
-	key := string(msg.Hdr.RPCID)
-	exp := time.Unix(int64(msg.Hdr.Time), 0)
-	w := &wrappedMsg{
-		msg: msg,
-		c:   c,
-	}
-	return dht.sman.Enqueue(key, w, exp)
-}
 
 func (dht *DHT) send(rpcid []byte, payload core.MessagePayload, target *core.NodeTriple) error {
 	exp := time.Now().Add(dht.fixedTimeout)
@@ -126,17 +99,18 @@ func (dht *DHT) send(rpcid []byte, payload core.MessagePayload, target *core.Nod
 		Version:  core.Version,
 		BodyKind: payload.BodyKind(),
 		Hdr: &core.Header{
-			MsgType:  payload.MsgType(),
-			NodeID:   dht.self.ID,
-			PuzDynX:  dht.x,
-			NodeIP:   dht.self.IP,
-			NodePort: dht.self.Port,
-			RPCID:    rpcid,
-			Time:     uint64(exp.Unix()),
+			NetworkID: dht.networkId,
+			MsgType:   payload.MsgType(),
+			ID:        dht.self.ID,
+			PuzDynX:   dht.x,
+			IP:        dht.self.IP,
+			Port:      dht.self.Port,
+			RPCID:     rpcid,
+			Time:      uint64(exp.Unix()),
 		},
 		Payload: payload,
 	}
-	dht.logf(LogInfo, "send %s to %s %d\n", msgTypeString(msg.Hdr.MsgType),
+	dht.logf(LogInfo, "send %s to %s %d", msgTypeString(msg.Hdr.MsgType),
 		target.IP, target.Port)
 	switch msg.BodyKind {
 	case core.KindFixed:
@@ -148,6 +122,7 @@ func (dht *DHT) send(rpcid []byte, payload core.MessagePayload, target *core.Nod
 		if err != nil {
 			return err
 		}
+		// TODO: check close value
 		defer conn.Close()
 		if err = conn.SetDeadline(time.Now().Add(dht.fixedTimeout)); err != nil {
 			return err
@@ -168,6 +143,7 @@ func (dht *DHT) send(rpcid []byte, payload core.MessagePayload, target *core.Nod
 		if err != nil {
 			return err
 		}
+		// TODO: check close value
 		defer conn.Close()
 		if err = conn.SetDeadline(time.Now().Add(dht.streamTimeout)); err != nil {
 			return err

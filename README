@@ -13,45 +13,7 @@ DHT also includes many other security measures:
 
 The network is completely decentralized. For more details read the PROTOCOL.
 
-Program design:
-
-	All code is my own.
-
-	dht.go
-		Main program for orchestrating the Store, Load, and Bootstrap
-		DHT actions.
-	find.go
-		Self-feeding min-heap for concurrently querying nodes.
-	handler.go
-		Take actions on incoming messages.
-	log.go
-		Default logger for printing to stdout/stderr.
-	msg.go
-		Utility functions for receiving and sending messags.
-	storer.go
-		Storer interface for storing and loading key-value pairs in a
-		file splay.
-	update.go
-		Utility function for updating RTable after communicating with
-		nodes.
-	core/
-		PROTOCOL structures and marshalling functions.
-		crypto/
-			XChaCha20 fixed and stream (chunked) encryption.
-			Conversion of Ed25519 Edwards curve keypairs (for
-			signing and identity) to X25519 Montgomery curve
-			keypairs (for encryption).
-	rtable/
-		RTable and KBucket implementations, described in Kademlia paper.
-		160-branch RTable tree based on largest common prefix to node
-		self, and KBucket LRU cache of longest-surviving nodes.
-	session/
-		RPCID session manager: cache of expiring sessions with
-		registered handlers.
-	util/
-		Various utility functions.
-
-To run a node:
+To operate a node:
 
 1. Install golang: golang.org/dl
 
@@ -62,40 +24,35 @@ On Linux distributions like Ubuntu, Fedora, etc. you should be able to install a
 
 	go get -u github.com/esote/dht/cmd/dht
 
-This will create a "dht" executable in your go/bin folder
+This will create a "dht" executable in your go/bin folder. Add ~/go/bin to PATH.
 
 3. Create a working directory, for example
 
 	mkdir /tmp/dht
 
-3. Run a node
+3. Start a node
 
-	~/go/bin/dht -p PORT /PATH/TO/DIR
+	dht /tmp/dht start PORT
 
-Flags must be specified before the working directory. For example
+The program will ask for a password to encrypt the node's private key.
 
-	~/go/bin/dht -p 8080 /tmp/dht
+4. Stop a node
 
-The program will ask for a password to encrypt the node's private key. Then it
-accepts commands like a CLI. Commands:
+	dht /tmp/dht stop
 
-	bootstrap NODEID NODEIP NODEPORT
+5. Bootstrap another node
 
-		Bootstrap a node, NODEID must be full hex code, NODEIP must be
-		an IPv4 or IPv6 address (hostnames not allowed).
+	dht /tmp/dht bootstrap ID IP:PORT
 
-	store /PATH/TO/FILE
+		Bootstrap a node, ID must be full base64 code, IP must be an
+		IPv4 or IPv6 address (hostnames not allowed).
 
-		Store a new file on the network.
+6. Store a file on the network
 
-	load KEY /PATH/TO/OUTPUT
+	dht /tmp/dht store /PATH/TO/FILE
 
-		Load a file from the network and save it to an output file. KEY
-		must be full hex code.
+7. Load a file from the network
 
-	exit
+	dht /tmp/dht load KEY /PATH/TO/OUTPUT
 
-		Quit program. ^D also works.
-
-There is also a flag "-c" to disable CLI input after entering the password,
-meaning the node will only accept requests from other nodes (daemonized).
+		KEY must be full base64 code.

@@ -15,16 +15,6 @@ import (
 	"golang.org/x/crypto/hkdf"
 )
 
-func StreamedLength(l, bufsiz int) int {
-	if l == 0 {
-		return 0
-	}
-	// m chunks of data, valid only for l > 0
-	m := (l-1)/bufsiz + 1
-	return l + curve25519.ScalarSize + sha512.Size +
-		m*(nonceSize+overheadSize)
-}
-
 type writer struct {
 	dst io.Writer
 
@@ -41,6 +31,15 @@ type writer struct {
 	counter  uint64
 }
 
+// NewWriter implements encryption for an io.Writer object. Encryption is done
+// in chunks of bufsiz plaintext. Writing is buffered, and the object should be
+// closed to flush remaining buffered plaintext (by encrypting a smaller last
+// chunk). The AEAD nonce is 16 bytes randomly generated followed by an 8-byte
+// counter (incrementing for each chunk).
+//
+// Ciphertext size = len(plaintext) + curve25519.ScalarSize + sha512.Size +
+// ((len(plaintext) - 1)/bufsiz + 1) * (chacha20poly1305.NonceSizeX +
+// poly1305.TagSize).
 func NewWriter(w io.Writer, publ []byte, bufsiz int) (io.WriteCloser, error) {
 	if len(publ) != curve25519.ScalarSize {
 		return nil, errors.New("bad publ length")
@@ -158,6 +157,9 @@ type reader struct {
 	err error
 }
 
+// NewReader implements decryption for an io.Reader object. Decryption is done
+// in chunks of bufsiz plaintext. Reading is buffered, and only reading until
+// EOF is gauranteed to result in an empty ciphertext buffer.
 func NewReader(r io.Reader, priv []byte, bufsiz int) (io.Reader, error) {
 	if len(priv) != curve25519.ScalarSize {
 		return nil, errors.New("bad priv length")
