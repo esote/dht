@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha512"
-	"encoding/hex"
 	"io/ioutil"
 	"net"
 	"strings"
@@ -12,16 +11,13 @@ import (
 	"time"
 )
 
-var (
-	publ, _ = hex.DecodeString("527c8ebbe7b7daa6cd0ab162889ccae2cbe29821a" +
-		"6b701ea3c0dd0cac39dae71")
-	priv, _ = hex.DecodeString("c7bf6ab10b5ec47f3d27c6661c3f5e292bd9986cc" +
-		"af3b1a05c33b33d6aa026f4527c8ebbe7b7daa6cd0ab162889ccae2cbe29" +
-		"821a6b701ea3c0dd0cac39dae71")
-	dynX, _ = hex.DecodeString("58c7d6df2b3b2dd61265476b639a1a647afecdae2" +
-		"2493cad3ff6954e843dd8adcf7fc9b272c055cfff2b9b9bae7ab64ac3102" +
-		"3349b47189765756579c0bb6ff1")
+// Puzzle constants used to generate testing keypair. Must be small.
+const (
+	c1 = 4
+	c2 = 4
+)
 
+var (
 	value = "value"
 	key   []byte
 )
@@ -32,6 +28,11 @@ func init() {
 }
 
 func TestIdempotence(t *testing.T) {
+	codec := NewMessageCodec(c1, c2)
+	publ, priv, x, err := codec.NewNodeID()
+	if err != nil {
+		t.Fatal(err)
+	}
 	tests := []MessagePayload{
 		&PingPayload{},
 		&StorePayload{
@@ -71,7 +72,7 @@ func TestIdempotence(t *testing.T) {
 		Hdr: &Header{
 			NetworkID: []byte{0, 0, 0, 1},
 			ID:        publ,
-			PuzDynX:   dynX,
+			PuzDynX:   x,
 			IP:        net.IPv4(127, 0, 0, 1),
 			Port:      9000,
 			RPCID:     rpcid,
@@ -81,25 +82,25 @@ func TestIdempotence(t *testing.T) {
 	for i, test := range tests {
 		msg1.BodyKind = test.BodyKind()
 		msg1.Hdr.MsgType = test.MsgType()
-		msg1.Hdr.Time = uint64(time.Now().Add(time.Second).Unix())
+		msg1.Hdr.Time = uint64(time.Now().Add(10 * time.Second).Unix())
 		msg1.Payload = test
 
 		var msg2 Message
 		switch msg1.BodyKind {
 		case KindFixed:
-			data, err := msg1.MarshalFixed(priv, publ)
+			data, err := codec.EncodeFixed(msg1, priv, publ)
 			if err != nil {
 				t.Fatalf("test %d: %s", i, err)
 			}
-			if err = msg2.UnmarshalFixed(data, priv); err != nil {
+			if err = codec.DecodeFixed(&msg2, data, priv); err != nil {
 				t.Fatalf("test %d: %s", i, err)
 			}
 		case KindStream:
 			var b bytes.Buffer
-			if err := msg1.MarshalStream(&b, priv, publ); err != nil {
+			if err := codec.EncodeStream(msg1, &b, priv, publ); err != nil {
 				t.Fatalf("test %d: %s", i, err)
 			}
-			if err := msg2.UnmarshalStream(&b, priv); err != nil {
+			if err := codec.DecodeStream(&msg2, &b, priv); err != nil {
 				t.Fatalf("test %d: %s", i, err)
 			}
 		default:

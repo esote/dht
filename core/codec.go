@@ -2,16 +2,124 @@ package core
 
 import (
 	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha512"
 	"errors"
 	"io"
 	"math"
 	"time"
 
 	"github.com/esote/dht/core/crypto"
+	"golang.org/x/crypto/sha3"
 )
 
-// MarshalFixed returns the fixed-format encoding of msg.
-func (msg *Message) MarshalFixed(priv, targetPubl []byte) ([]byte, error) {
+// MessageCodec implements encryption and decryption of fixed and stream-format
+// messages. It is safe for concurrent use.
+type MessageCodec struct {
+	c1, c2 int
+}
+
+// NewMessageCodec constructs a MessageCodec with the c1 static puzzle constant
+// and c2 dynamic puzzle constant. A given codec M is compatible with another
+// codec N if M.C1 >= N.C1 and M.C2 >= N.C2.
+func NewMessageCodec(c1, c2 int) *MessageCodec {
+	return &MessageCodec{c1, c2}
+}
+
+// NewNodeID generates a keypair where the public key (node ID) satisfies the
+// codec's crypto puzzle constants and may be used in codec operations.
+func (codec *MessageCodec) NewNodeID() (publ ed25519.PublicKey, priv ed25519.PrivateKey, x []byte, err error) {
+	// Static puzzle
+	h := sha512.New()
+	p := make([]byte, h.Size())
+	for {
+		publ, priv, err = ed25519.GenerateKey(nil)
+		if err != nil {
+			return
+		}
+		h.Reset()
+		if _, err = h.Write(publ); err != nil {
+			return
+		}
+		p = h.Sum(p[:0])
+		h.Reset()
+		if _, err = h.Write(p); err != nil {
+			return
+		}
+		if p = h.Sum(p[:0]); leadingZeros(p) >= codec.c1 {
+			// Success
+			break
+		}
+	}
+
+	// Dynamic puzzle
+	h = sha3.New512()
+	if _, err = h.Write(publ); err != nil {
+		return
+	}
+	p = h.Sum(p[:0])
+	x = make([]byte, h.Size())
+	p2 := make([]byte, h.Size())
+	for {
+		if _, err = rand.Read(x); err != nil {
+			return
+		}
+		xor(p2, p, x)
+		h.Reset()
+		if _, err = h.Write(p2); err != nil {
+			return
+		}
+		if p2 = h.Sum(p2[:0]); leadingZeros(p2) >= codec.c2 {
+			// Success
+			return
+		}
+	}
+}
+
+// verifyNodeID checks that a public key (node ID) satisfies the crypto puzzle
+// constraints c1 and c2.
+func (codec *MessageCodec) verifyNodeID(publ ed25519.PublicKey, x []byte) bool {
+	defer func() {
+		_ = recover()
+	}()
+
+	// Static puzzle
+	if len(publ) != ed25519.PublicKeySize {
+		return false
+	}
+	h := sha512.New()
+	if _, err := h.Write(publ); err != nil {
+		return false
+	}
+	p := h.Sum(nil)
+	h.Reset()
+	if _, err := h.Write(p); err != nil {
+		return false
+	}
+	if p = h.Sum(p[:0]); leadingZeros(p) < codec.c1 {
+		return false
+	}
+
+	// Dynamic Puzzle
+	h = sha3.New512()
+	if len(x) != h.Size() {
+		return false
+	}
+	if _, err := h.Write(publ); err != nil {
+		return false
+	}
+	p = h.Sum(p[:0])
+	h.Reset()
+	xor(p, p, x)
+	if _, err := h.Write(p); err != nil {
+		return false
+	}
+	p = h.Sum(p[:0])
+	return leadingZeros(p) >= codec.c2
+}
+
+// EncodeFixed returns the fixed-format encoding of msg.
+func (codec *MessageCodec) EncodeFixed(msg *Message, priv, targetPubl []byte) ([]byte, error) {
 	data := make([]byte, FixedMessageSize)
 	b := data
 
@@ -75,8 +183,8 @@ func (msg *Message) MarshalFixed(priv, targetPubl []byte) ([]byte, error) {
 	return data, nil
 }
 
-// UnmarshalFixed decodes data to a fixed-format msg.
-func (msg *Message) UnmarshalFixed(data, priv []byte) error {
+// DecodeFixed decodes data to a fixed-format msg.
+func (codec *MessageCodec) DecodeFixed(msg *Message, data, priv []byte) error {
 	if len(data) < FixedMessageSize {
 		return errors.New("message truncated")
 	}
@@ -116,7 +224,7 @@ func (msg *Message) UnmarshalFixed(data, priv []byte) error {
 	if err = msg.Hdr.UnmarshalBinary(plain); err != nil {
 		return err
 	}
-	if err = verifyHeader(msg.Hdr); err != nil {
+	if err = codec.verifyHeader(msg.Hdr); err != nil {
 		return err
 	}
 	if !ed25519.Verify(msg.Hdr.ID, plain, sig) {
@@ -159,8 +267,8 @@ func (msg *Message) UnmarshalFixed(data, priv []byte) error {
 	return nil
 }
 
-// MarshalStream writes the stream-format encoding of msg to w.
-func (msg *Message) MarshalStream(w io.Writer, priv, targetPubl []byte) error {
+// EncodeStream writes the stream-format encoding of msg to w.
+func (codec *MessageCodec) EncodeStream(msg *Message, w io.Writer, priv, targetPubl []byte) error {
 	data := make([]byte, PreBodySize)
 	b := data
 
@@ -216,8 +324,8 @@ func (msg *Message) MarshalStream(w io.Writer, priv, targetPubl []byte) error {
 	return wc.Close()
 }
 
-// UnmarshalStream decodes from stream-format r to msg.
-func (msg *Message) UnmarshalStream(r io.Reader, priv []byte) error {
+// DecodeStream decodes from stream-format r to msg.
+func (codec *MessageCodec) DecodeStream(msg *Message, r io.Reader, priv []byte) error {
 	data := make([]byte, PreBodySize)
 	if _, err := io.ReadFull(r, data); err != nil {
 		return err
@@ -258,7 +366,7 @@ func (msg *Message) UnmarshalStream(r io.Reader, priv []byte) error {
 	if err = msg.Hdr.UnmarshalBinary(header); err != nil {
 		return err
 	}
-	if err = verifyHeader(msg.Hdr); err != nil {
+	if err = codec.verifyHeader(msg.Hdr); err != nil {
 		return err
 	}
 	if !ed25519.Verify(msg.Hdr.ID, header, sig) {
@@ -282,14 +390,14 @@ func (msg *Message) UnmarshalStream(r io.Reader, priv []byte) error {
 	return nil
 }
 
-func verifyHeader(hdr *Header) error {
+func (codec *MessageCodec) verifyHeader(hdr *Header) error {
 	if hdr.Time > uint64(math.MaxInt64) {
 		return errors.New("header time too large")
 	}
 	if time.Unix(int64(hdr.Time), 0).Before(time.Now().UTC()) {
 		return errors.New("header expired")
 	}
-	if !VerifyNodeID(hdr.ID, hdr.PuzDynX) {
+	if !codec.verifyNodeID(hdr.ID, hdr.PuzDynX) {
 		return errors.New("node ID invalid")
 	}
 	return nil

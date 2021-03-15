@@ -243,7 +243,8 @@
 
 		LENGTH [8 bytes]
 
-			Length of the value as an unsigned integer.
+			Length of the value as an unsigned integer. Length must
+			not be zero.
 
 9. DATA message payload format
 

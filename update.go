@@ -22,36 +22,42 @@ func (dht *DHT) update(n *core.NodeTriple) {
 	}, n)
 }
 
-func (dht *DHT) updateInner(n *core.NodeTriple) error {
-	if err := dht.rtable.Store(n); err != rtable.ErrRTableFull {
-		return err
+func (dht *DHT) updateInner(n *core.NodeTriple) (err error) {
+	if err = dht.rtable.Store(n); err != rtable.ErrRTableFull {
+		return
 	}
 	oldest, err := dht.rtable.Oldest(n.ID)
 	if err != nil {
-		return err
+		return
 	}
 
-	rpcid, ch, done, c, err := dht.newHandler()
+	s, err := dht.newSession()
 	if err != nil {
-		return err
+		return
 	}
-	// TODO: check close result
-	defer c.Close()
+	defer func() {
+		if err2 := s.Close(); err == nil {
+			err = err2
+		}
+	}()
 
 	payload := &core.PingPayload{}
-	if err = dht.send(rpcid, payload, oldest); err != nil {
-		return err
+	if err = s.send(payload, oldest); err != nil {
+		return
 	}
 
-	msg, err := dht.recv(ch, done)
+	msg, err := s.recv()
 	if err == nil {
 		// Close immediately, no stream message expected.
-		_ = msg.Close()
+		if err = msg.Close(); err != nil {
+			return
+		}
 	}
 	if err == nil && msg.Hdr.MsgType == core.TypePing {
 		// Oldest node is alive.
 		return dht.rtable.Store(oldest)
 	}
 
+	// Oldest node is not alive, unable to receive ping.
 	return dht.rtable.ReplaceOldest(n)
 }

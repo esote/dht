@@ -3,7 +3,6 @@ package dht
 import (
 	"bytes"
 	"errors"
-	"io"
 	"io/ioutil"
 	"net"
 	"os"
@@ -16,7 +15,7 @@ import (
 	"github.com/esote/dht/find"
 	"github.com/esote/dht/rtable"
 	"github.com/esote/dht/session"
-	"github.com/esote/dht/util"
+	"github.com/esote/dht/storer"
 	"github.com/esote/enc"
 	"github.com/esote/util/pool"
 )
@@ -25,8 +24,10 @@ const (
 	k     = 32
 	alpha = 3
 
-	maxSessions  = 4096 // max active sessions
-	maxListeners = 2    // listen to UDP and TCP at the same time
+	c1 = 23
+	c2 = 24
+
+	maxSessions = 4096 // max active sessions
 
 	maxFindWorkers       = alpha
 	maxFindBacklogSize   = core.NodeIDSize * 8 * k
@@ -48,16 +49,54 @@ type DHTConfig struct {
 	NetworkID     []byte
 	Dir           string
 	Password      []byte
-	Storer        Storer
+	Storer        storer.Storer
 	Logger        Logger
 	IP            net.IP
 	Port          uint16
 	FixedTimeout  time.Duration // Timeout for fixed-length messages
 	StreamTimeout time.Duration // Timeout for stream messages
+
+	c1, c2 int
+}
+
+// Validate config and set default values.
+func (config *DHTConfig) clean() error {
+	if config == nil {
+		return errors.New("dht: config is nil")
+	}
+	if len(config.NetworkID) != core.NetworkIDSize ||
+		bytes.Equal(config.NetworkID, []byte{0, 0, 0, 0}) {
+		return errors.New("dht: network ID missing or invalid")
+	}
+	if config.Logger == nil {
+		config.Logger = NewConsoleLogger(LogInfo)
+	}
+	config.Dir = filepath.Clean(config.Dir)
+	info, err := os.Stat(config.Dir)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return errors.New("dht: config.Dir is not a directory")
+	}
+	if ip := config.IP.To4(); ip != nil {
+		config.IP = ip
+	} else if ip = config.IP.To16(); ip != nil {
+		config.IP = ip
+	} else {
+		return errors.New("dht: config.IP invalid")
+	}
+	if config.c1 == 0 {
+		config.c1 = c1
+	}
+	if config.c2 == 0 {
+		config.c2 = c2
+	}
+	return nil
 }
 
 type DHT struct {
-	storer Storer
+	storer storer.Storer
 	rtable rtable.RTable
 	logger Logger
 
@@ -70,12 +109,14 @@ type DHT struct {
 	priv []byte
 	x    []byte
 
+	codec *core.MessageCodec
+
 	sman     *session.Manager
 	handlers sync.WaitGroup
 
 	listeners sync.WaitGroup
-	tcp       *net.TCPListener
-	udp       *net.UDPConn
+	tcp       []*net.TCPListener
+	udp       []*net.UDPConn
 	done      chan struct{}
 
 	finders map[*find.Finder]bool
@@ -88,90 +129,62 @@ type DHT struct {
 }
 
 func NewDHT(config *DHTConfig) (*DHT, error) {
-	if config == nil {
-		return nil, errors.New("dht: config is nil")
-	}
-	if len(config.NetworkID) != core.NetworkIDSize ||
-		bytes.Equal(config.NetworkID, []byte{0, 0, 0, 0}) {
-		return nil, errors.New("dht: network ID missing or invalid")
-	}
-	logger := config.Logger
-	if logger == nil {
-		logger = NewConsoleLogger(LogInfo)
-	}
-	config.Dir = filepath.Clean(config.Dir)
-	info, err := os.Stat(config.Dir)
-	if err != nil {
+	if err := config.clean(); err != nil {
 		return nil, err
-	}
-	if !info.IsDir() {
-		return nil, errors.New("dht: config.Dir is not a directory")
-	}
-	publ, priv, x, err := readKeypair(config.Dir, config.Password)
-	if err != nil && os.IsNotExist(err) {
-		logger.Log(LogInfo, "creating new keypair")
-		publ, priv, x, err = createKeypair(config.Dir, config.Password)
-		logger.Log(LogInfo, "keypair created")
-	} else if err == nil {
-		logger.Log(LogInfo, "loaded existing config")
-	}
-	if err != nil {
-		return nil, err
-	}
-	if ip := config.IP.To4(); ip != nil {
-		config.IP = ip
-	} else if ip := config.IP.To16(); ip != nil {
-		config.IP = ip
-	} else {
-		return nil, errors.New("dht: config.IP invalid")
 	}
 	// After this, when returning in error the DHT should be closed.
 	dht := &DHT{
 		storer:        config.Storer,
-		logger:        logger,
+		logger:        config.Logger,
 		fixedTimeout:  config.FixedTimeout,
 		streamTimeout: config.StreamTimeout,
 		networkId:     config.NetworkID,
 		self: &core.NodeTriple{
-			ID:   publ,
 			IP:   config.IP,
 			Port: config.Port,
 		},
-		priv:       priv,
-		x:          x,
-		done:       make(chan struct{}, maxListeners),
+		codec:      core.NewMessageCodec(config.c1, config.c2),
 		finders:    make(map[*find.Finder]bool),
 		updatePool: pool.New(maxUpdateWorkers, maxUpdateBacklog),
 		state:      open,
 	}
+	err := dht.loadKeypair(config.Dir, config.Password)
+	switch {
+	case err == nil:
+		dht.log(LogInfo, "loaded existing config")
+	case err != nil && os.IsNotExist(err):
+		dht.log(LogInfo, "creating new keypair")
+		if err = dht.createKeypair(config.Dir, config.Password); err != nil {
+			_ = dht.Close()
+			return nil, err
+		}
+		dht.log(LogInfo, "keypair created")
+	default:
+		_ = dht.Close()
+		return nil, err
+	}
 	dht.log(LogInfo, "self", nodeToString(dht.self))
-	dht.rtable, err = rtable.NewRTable(publ, k, config.Dir)
+	dht.rtable, err = rtable.NewRTable(dht.self.ID, k, config.Dir)
 	if err != nil {
 		_ = dht.Close()
 		return nil, err
 	}
 	dht.sman = session.NewManager(maxSessions, dht.handlerFunc)
-	// TODO: OpenBSD requires opening separate tcp6 & udp6 listeners
+	if err = dht.createListeners(int(config.Port)); err != nil {
+		_ = dht.Close()
+		return nil, err
+	}
 	// TODO: OpenBSD doesn't support IPv4 mapped IPv6 addresses, always
 	// convert to unmapped address where possible
-	dht.tcp, err = net.ListenTCP("tcp", &net.TCPAddr{
-		Port: int(config.Port),
-	})
-	if err != nil {
-		_ = dht.Close()
-		return nil, err
+	listening := len(dht.tcp) + len(dht.udp)
+	dht.done = make(chan struct{}, listening)
+	dht.listeners.Add(listening)
+	for i := range dht.tcp {
+		go dht.listenTCP(dht.tcp[i])
 	}
-	dht.listeners.Add(1)
-	go dht.listenTCP()
-	dht.udp, err = net.ListenUDP("udp", &net.UDPAddr{
-		Port: int(config.Port),
-	})
-	if err != nil {
-		_ = dht.Close()
-		return nil, err
+	for i := range dht.udp {
+		go dht.listenUDP(dht.udp[i])
 	}
-	dht.listeners.Add(1)
-	go dht.listenUDP()
 	return dht, nil
 }
 
@@ -197,137 +210,30 @@ func (dht *DHT) removeFinder(f *find.Finder) {
 	delete(dht.finders, f)
 }
 
-// Rereader returns a new reader for the same source, allowing its stream to be
-// "reread".
-type Rereader interface {
-	Next() (io.ReadCloser, error)
-}
-
-/*
-	XXX: use multiwriter with buffered pipe, rather than Rereader
-*/
-func (dht *DHT) Store(key []byte, length uint64, value Rereader) error {
-	if len(key) != core.KeySize {
-		return errors.New("invalid key")
-	}
-	id := key[:core.NodeIDSize]
-	cfg := &find.Config{
-		Start:            []*core.NodeTriple{dht.self},
-		Target:           id,
-		Workers:          maxFindWorkers,
-		MaxBacklogSize:   maxFindBacklogSize,
-		MaxReturn:        maxFindReturn,
-		MaxUniqueHistory: maxFindUniqueHistory,
-		Query: func(target *core.NodeTriple) []*core.NodeTriple {
-			return dht.findNode(id, target)
-		},
-	}
-
-	f, err := find.Find(cfg)
-	if err != nil {
-		return err
-	}
-	dht.addFinder(f)
-
-	closest := <-f.Done
-	dht.removeFinder(f)
-
-	if len(closest) == 0 {
-		return errors.New("no nodes found")
-	}
-	dht.logf(LogDebug, "storing in %d nodes", len(closest))
-	// Ask all nodes closest to key to store the value
-	for _, n := range closest {
-		v, err := value.Next()
-		if err != nil {
-			return err
-		}
-		// TODO: check close value
-		defer v.Close() // TODO: close earlier
-		dht.log(LogDebug, "storing in", nodeToString(n))
-		if bytes.Equal(n.ID, dht.self.ID) {
-			if err = dht.storer.Store(key, length, v); err != nil {
-				dht.log(LogErr, err)
-				// Continue execution
-			}
-		} else {
-			if !dht.askStore(n, key, length, v) {
-				dht.log(LogWarning, "unable to store in",
-					nodeToString(n))
-			}
-		}
-	}
-	return nil
-}
-
-func (dht *DHT) Load(key []byte) (value io.ReadCloser, length uint64, err error) {
-	if len(key) != core.KeySize {
-		return nil, 0, errors.New("invalid key")
-	}
-	var found int32 = open
-	var data *core.DataPayload
-	var c io.Closer
-	id := key[:core.NodeIDSize]
-	cfg := &find.Config{
-		Start:            []*core.NodeTriple{dht.self},
-		Target:           id,
-		Workers:          maxFindWorkers,
-		MaxBacklogSize:   maxFindBacklogSize,
-		MaxReturn:        maxFindReturn,
-		MaxUniqueHistory: maxFindUniqueHistory,
-		Query: func(target *core.NodeTriple) []*core.NodeTriple {
-			if atomic.LoadInt32(&found) == closed {
-				return nil
-			}
-			closest, data2, c2 := dht.findValue(key, target)
-			if data2 != nil {
-				if !atomic.CompareAndSwapInt32(&found, open, closed) {
-					return nil
-				}
-				data, c = data2, c2
-				return []*core.NodeTriple{{ID: id}}
-			}
-			return closest
-		},
-	}
-
-	f, err := find.Find(cfg)
-	if err != nil {
-		return nil, 0, err
-	}
-	dht.addFinder(f)
-
-	<-f.Done
-	dht.removeFinder(f)
-
-	if data == nil {
-		return nil, 0, errors.New("value not found")
-	}
-	return util.JoinReadCloser(data.Value, c), data.Length, nil
-}
-
-func (dht *DHT) Bootstrap(id []byte, ip net.IP, port uint16) error {
+func (dht *DHT) Bootstrap(id []byte, ip net.IP, port uint16) (err error) {
 	target := &core.NodeTriple{
 		ID:   id,
 		IP:   ip,
 		Port: port,
 	}
-	rpcid, ch, done, hc, err := dht.newHandler()
+	s, err := dht.newSession()
 	if err != nil {
 		return err
 	}
-	// TODO: check close value
-	defer hc.Close()
+	defer func() {
+		if err2 := s.Close(); err == nil {
+			err = err2
+		}
+	}()
 
 	fnode := &core.FindNodePayload{
 		Count:  k,
 		Target: dht.self.ID,
 	}
-	if err := dht.send(rpcid, fnode, target); err != nil {
+	if err = s.send(fnode, target); err != nil {
 		return err
 	}
-
-	msg, err := dht.recv(ch, done)
+	msg, err := s.recv()
 	if err != nil {
 		return err
 	}
@@ -360,12 +266,15 @@ func (dht *DHT) Close() error {
 	if !atomic.CompareAndSwapInt32(&dht.state, open, closed) {
 		return errors.New("close on closed DHT")
 	}
-	// Stop accepting new connections.
+	// Stop accepting new connections. Don't close connections yet because
+	// that closes value readers.
 	for i := 0; i < cap(dht.done); i++ {
 		dht.done <- struct{}{}
 	}
 	dht.listeners.Wait()
-	close(dht.done)
+	if dht.done != nil {
+		close(dht.done)
+	}
 	var err error
 
 	// Halt running sessions.
@@ -387,14 +296,18 @@ func (dht *DHT) Close() error {
 	dht.findwg.Wait()
 
 	// Disconnect existing connections.
-	if dht.tcp != nil {
-		if err2 := dht.tcp.Close(); err == nil {
-			err = err2
+	for _, l := range dht.tcp {
+		if l != nil {
+			if err2 := l.Close(); err == nil {
+				err = err2
+			}
 		}
 	}
-	if dht.udp != nil {
-		if err2 := dht.udp.Close(); err == nil {
-			err = err2
+	for _, l := range dht.udp {
+		if l != nil {
+			if err2 := l.Close(); err == nil {
+				err = err2
+			}
 		}
 	}
 
@@ -412,7 +325,7 @@ func (dht *DHT) Close() error {
 	return err
 }
 
-func (dht *DHT) listenUDP() {
+func (dht *DHT) listenUDP(udp *net.UDPConn) {
 	defer dht.listeners.Done()
 	buf := make([]byte, core.FixedMessageSize)
 	for {
@@ -421,11 +334,11 @@ func (dht *DHT) listenUDP() {
 			return
 		default:
 		}
-		if err := dht.udp.SetDeadline(time.Now().Add(netAcceptTimeout)); err != nil {
+		if err := udp.SetDeadline(time.Now().Add(netAcceptTimeout)); err != nil {
 			dht.log(LogErr, err)
 			return
 		}
-		n, addr, err := dht.udp.ReadFrom(buf)
+		n, addr, err := udp.ReadFrom(buf)
 		if err != nil {
 			if v, ok := err.(net.Error); !ok || !v.Timeout() {
 				dht.log(LogWarning, err)
@@ -433,7 +346,7 @@ func (dht *DHT) listenUDP() {
 			continue
 		}
 		var msg core.Message
-		if err = msg.UnmarshalFixed(buf[:n], dht.priv); err != nil {
+		if err = dht.codec.DecodeFixed(&msg, buf[:n], dht.priv); err != nil {
 			dht.log(LogWarning, err)
 			continue
 		}
@@ -453,7 +366,7 @@ func (dht *DHT) listenUDP() {
 	}
 }
 
-func (dht *DHT) listenTCP() {
+func (dht *DHT) listenTCP(tcp *net.TCPListener) {
 	defer dht.listeners.Done()
 	for {
 		select {
@@ -461,11 +374,11 @@ func (dht *DHT) listenTCP() {
 			return
 		default:
 		}
-		if err := dht.tcp.SetDeadline(time.Now().Add(netAcceptTimeout)); err != nil {
+		if err := tcp.SetDeadline(time.Now().Add(netAcceptTimeout)); err != nil {
 			dht.log(LogErr, err)
 			return
 		}
-		conn, err := dht.tcp.Accept()
+		conn, err := tcp.Accept()
 		if err != nil {
 			if v, ok := err.(net.Error); !ok || !v.Timeout() {
 				dht.log(LogWarning, err)
@@ -478,7 +391,7 @@ func (dht *DHT) listenTCP() {
 			continue
 		}
 		var msg core.Message
-		if err = msg.UnmarshalStream(conn, dht.priv); err != nil {
+		if err = dht.codec.DecodeStream(&msg, conn, dht.priv); err != nil {
 			_ = conn.Close()
 			dht.log(LogWarning, err)
 			continue
@@ -501,8 +414,8 @@ func (dht *DHT) listenTCP() {
 	}
 }
 
-func readKeypair(dir string, pass []byte) (publ, priv, x []byte, err error) {
-	publ, err = ioutil.ReadFile(filepath.Join(dir, "publ"))
+func (dht *DHT) loadKeypair(dir string, pass []byte) (err error) {
+	dht.self.ID, err = ioutil.ReadFile(filepath.Join(dir, "publ"))
 	if err != nil {
 		return
 	}
@@ -510,23 +423,23 @@ func readKeypair(dir string, pass []byte) (publ, priv, x []byte, err error) {
 	if err != nil {
 		return
 	}
-	if err = enc.Decrypt(encpriv, pass, &priv); err != nil {
+	if err = enc.Decrypt(encpriv, pass, &dht.priv); err != nil {
 		return
 	}
-	x, err = ioutil.ReadFile(filepath.Join(dir, "x"))
+	dht.x, err = ioutil.ReadFile(filepath.Join(dir, "x"))
 	return
 }
 
-func createKeypair(dir string, pass []byte) (publ, priv, x []byte, err error) {
-	publ, priv, x, err = core.NewNodeID()
+func (dht *DHT) createKeypair(dir string, pass []byte) (err error) {
+	dht.self.ID, dht.priv, dht.x, err = dht.codec.NewNodeID()
 	if err != nil {
 		return
 	}
-	err = ioutil.WriteFile(filepath.Join(dir, "publ"), publ, 0600)
+	err = ioutil.WriteFile(filepath.Join(dir, "publ"), dht.self.ID, 0600)
 	if err != nil {
 		return
 	}
-	encpriv, _, err := enc.Encrypt(pass, &priv)
+	encpriv, _, err := enc.Encrypt(pass, &dht.priv)
 	if err != nil {
 		return
 	}
@@ -534,6 +447,6 @@ func createKeypair(dir string, pass []byte) (publ, priv, x []byte, err error) {
 	if err != nil {
 		return
 	}
-	err = ioutil.WriteFile(filepath.Join(dir, "x"), x, 0600)
+	err = ioutil.WriteFile(filepath.Join(dir, "x"), dht.x, 0600)
 	return
 }

@@ -11,7 +11,7 @@ func TestManager(t *testing.T) {
 	const c = 3
 	ch := make(chan *MessageCloser, c)
 	done := make(chan struct{}, c)
-	hf := func() *Handler {
+	hf := func(_ []byte) *Handler {
 		return &Handler{
 			Ch:   ch,
 			Done: done,

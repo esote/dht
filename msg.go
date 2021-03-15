@@ -3,7 +3,6 @@ package dht
 import (
 	"crypto/rand"
 	"errors"
-	"io"
 	"net"
 	"time"
 
@@ -11,46 +10,18 @@ import (
 	"github.com/esote/dht/session"
 )
 
-func msgTypeString(t uint8) string {
-	switch t {
-	case core.TypePing:
-		return "PING"
-	case core.TypeStore:
-		return "STORE"
-	case core.TypeData:
-		return "DATA"
-	case core.TypeFindNode:
-		return "FIND_NODE"
-	case core.TypeFindNodeResp:
-		return "FIND_NODE_RESP"
-	case core.TypeFindValue:
-		return "FIND_VALUE"
-	case core.TypeError:
-		return "ERROR"
-	default:
-		return "<nil>"
-	}
-}
-
-type hcloser struct {
+type rpcSession struct {
 	ch    chan *session.MessageCloser
 	done  chan struct{}
-	rpcid string
-	dht   *DHT
+	rpcid []byte
+
+	dht *DHT
 }
 
-func (h *hcloser) Close() error {
-	err := h.dht.sman.Remove(h.rpcid)
-	h.dht.handlers.Done()
-	close(h.done)
-	close(h.ch)
-	return err
-}
-
-func (dht *DHT) newHandler() ([]byte, <-chan *session.MessageCloser, <-chan struct{}, io.Closer, error) {
+func (dht *DHT) newSession() (*rpcSession, error) {
 	rpcid := make([]byte, core.RPCIDSize)
 	if _, err := rand.Read(rpcid); err != nil {
-		return nil, nil, nil, nil, err
+		return nil, err
 	}
 	ch := make(chan *session.MessageCloser, 1)
 	done := make(chan struct{}, 1)
@@ -60,57 +31,65 @@ func (dht *DHT) newHandler() ([]byte, <-chan *session.MessageCloser, <-chan stru
 	}
 	dht.handlers.Add(1)
 	exp := time.Now().Add(dht.fixedTimeout)
-	if err := dht.sman.Register(string(rpcid), exp, handler); err != nil {
+	if err := dht.sman.Register(rpcid, exp, handler); err != nil {
 		dht.handlers.Done()
 		close(done)
 		close(ch)
-		return nil, nil, nil, nil, err
+		return nil, err
 	}
-	return rpcid, ch, done, &hcloser{ch, done, string(rpcid), dht}, nil
+	return &rpcSession{
+		ch:    ch,
+		done:  done,
+		rpcid: rpcid,
+		dht:   dht,
+	}, nil
 }
 
-func (dht *DHT) recv(ch <-chan *session.MessageCloser, done <-chan struct{}) (*session.MessageCloser, error) {
-	timer := time.NewTimer(dht.fixedTimeout)
+func (s *rpcSession) Close() error {
+	defer s.dht.handlers.Done() // TODO: order after Remove?
+	err := s.dht.sman.Remove(s.rpcid)
+	close(s.done)
+	close(s.ch)
+	return err
+}
+
+func (s *rpcSession) recv() (*session.MessageCloser, error) {
+	timer := time.NewTimer(s.dht.fixedTimeout)
 	defer timer.Stop()
 	select {
-	case msg := <-ch:
+	case msg := <-s.ch:
 		if msg == nil {
 			return nil, errors.New("received nil message")
 		}
-		dht.logf(LogInfo, "recv %s from %s %d",
+		s.dht.logf(LogInfo, "recv %s from %s %d",
 			msgTypeString(msg.Hdr.MsgType), msg.Hdr.IP,
 			msg.Hdr.Port)
 		return msg, nil
-	case <-done:
-		// Session expired and garbage-collected by session manager.
+	case <-s.done:
 		return nil, errors.New("session expired")
 	case <-timer.C:
 		return nil, errors.New("receive timeout expired")
 	}
 }
 
-type nopCloser struct{}
-
-func (nopCloser) Close() error { return nil }
-
-func (dht *DHT) send(rpcid []byte, payload core.MessagePayload, target *core.NodeTriple) error {
-	exp := time.Now().Add(dht.fixedTimeout)
+func (s *rpcSession) send(payload core.MessagePayload, target *core.NodeTriple) (err error) {
+	exp := time.Now().Add(s.dht.fixedTimeout)
 	msg := &core.Message{
 		Version:  core.Version,
 		BodyKind: payload.BodyKind(),
 		Hdr: &core.Header{
-			NetworkID: dht.networkId,
+			NetworkID: s.dht.networkId,
 			MsgType:   payload.MsgType(),
-			ID:        dht.self.ID,
-			PuzDynX:   dht.x,
-			IP:        dht.self.IP,
-			Port:      dht.self.Port,
-			RPCID:     rpcid,
+			ID:        s.dht.self.ID,
+			PuzDynX:   s.dht.x,
+			IP:        s.dht.self.IP,
+			Port:      s.dht.self.Port,
+			RPCID:     s.rpcid,
 			Time:      uint64(exp.Unix()),
 		},
 		Payload: payload,
 	}
-	dht.logf(LogInfo, "send %s to %s %d", msgTypeString(msg.Hdr.MsgType),
+	s.dht.logf(LogInfo, "send %s to %s %d", msgTypeString(msg.Hdr.MsgType),
 		target.IP, target.Port)
 	switch msg.BodyKind {
 	case core.KindFixed:
@@ -122,18 +101,20 @@ func (dht *DHT) send(rpcid []byte, payload core.MessagePayload, target *core.Nod
 		if err != nil {
 			return err
 		}
-		// TODO: check close value
-		defer conn.Close()
-		if err = conn.SetDeadline(time.Now().Add(dht.fixedTimeout)); err != nil {
+		defer func() {
+			if err2 := conn.Close(); err == nil {
+				err = err2
+			}
+		}()
+		if err = conn.SetDeadline(time.Now().Add(s.dht.fixedTimeout)); err != nil {
 			return err
 		}
-		packet, err := msg.MarshalFixed(dht.priv, target.ID)
+		packet, err := s.dht.codec.EncodeFixed(msg, s.dht.priv, target.ID)
 		if err != nil {
 			return err
 		}
-		if _, err = conn.Write(packet); err != nil {
-			return err
-		}
+		_, err = conn.Write(packet)
+		return err
 	case core.KindStream:
 		addr := &net.TCPAddr{
 			IP:   target.IP,
@@ -143,16 +124,16 @@ func (dht *DHT) send(rpcid []byte, payload core.MessagePayload, target *core.Nod
 		if err != nil {
 			return err
 		}
-		// TODO: check close value
-		defer conn.Close()
-		if err = conn.SetDeadline(time.Now().Add(dht.streamTimeout)); err != nil {
+		defer func() {
+			if err2 := conn.Close(); err == nil {
+				err = err2
+			}
+		}()
+		if err = conn.SetDeadline(time.Now().Add(s.dht.streamTimeout)); err != nil {
 			return err
 		}
-		if err = msg.MarshalStream(conn, dht.priv, target.ID); err != nil {
-			return err
-		}
+		return s.dht.codec.EncodeStream(msg, conn, s.dht.priv, target.ID)
 	default:
 		return errors.New("message body kind unsupported")
 	}
-	return nil
 }

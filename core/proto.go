@@ -12,7 +12,7 @@ import (
 	"math"
 	"net"
 
-	"github.com/esote/dht/util"
+	"github.com/esote/util/io64"
 	"golang.org/x/crypto/sha3"
 )
 
@@ -314,7 +314,7 @@ func (data *DataPayload) MarshalStream(w io.Writer) error {
 	if _, err := w.Write(b); err != nil {
 		return err
 	}
-	_, err := util.CopyN(w, data.Value, data.Length)
+	_, err := io64.CopyN(w, data.Value, data.Length)
 	return err
 }
 
@@ -324,7 +324,7 @@ func (data *DataPayload) UnmarshalStream(r io.Reader) error {
 		return err
 	}
 	data.Length = binary.BigEndian.Uint64(b)
-	data.Value = util.NewLimitedReader(r, data.Length)
+	data.Value = io64.LimitReader(r, data.Length)
 	return nil
 }
 

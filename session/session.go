@@ -39,7 +39,7 @@ type Handler struct {
 }
 
 // HandlerFunc returns fresh handlers.
-type HandlerFunc func() *Handler
+type HandlerFunc func(rpcid []byte) *Handler
 
 // NewManager constructs a manager with a default handler hf and cache capacity.
 func NewManager(capacity int, hf HandlerFunc) *Manager {
@@ -54,14 +54,14 @@ func NewManager(capacity int, hf HandlerFunc) *Manager {
 
 // Register a custom handler for a session, which will be used in favor of the
 // default handler until the session expires.
-func (m *Manager) Register(rpcid string, exp time.Time, handler *Handler) error {
+func (m *Manager) Register(rpcid []byte, exp time.Time, handler *Handler) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if !m.open {
 		return errors.New("manager: register on closed manager")
 	}
-	if item, hit := m.cache[rpcid]; hit {
+	if item, hit := m.cache[string(rpcid)]; hit {
 		s := item.Value.(*session)
 		if !s.expired() {
 			return errors.New("manager: register on existing session")
@@ -84,7 +84,7 @@ func (m *Manager) Register(rpcid string, exp time.Time, handler *Handler) error 
 		rpcid: rpcid,
 		exp:   exp,
 	}
-	m.cache[rpcid] = m.list.PushFront(s)
+	m.cache[string(rpcid)] = m.list.PushFront(s)
 	return nil
 }
 
@@ -96,8 +96,7 @@ func (m *Manager) Enqueue(msg *MessageCloser) error {
 	if !m.open {
 		return errors.New("manager: enqueue on closed manager")
 	}
-	rpcid := string(msg.Hdr.RPCID)
-	if item, hit := m.cache[rpcid]; hit {
+	if item, hit := m.cache[string(msg.Hdr.RPCID)]; hit {
 		s := item.Value.(*session)
 		if !s.expired() {
 			// extends session expiration time
@@ -116,27 +115,27 @@ func (m *Manager) Enqueue(msg *MessageCloser) error {
 		}
 		m.remove(item)
 	}
-	handler := m.hf()
+	handler := m.hf(msg.Hdr.RPCID)
 	// Add new session
 	s := &session{
 		ch:    handler.Ch,
 		done:  handler.Done,
-		rpcid: rpcid,
+		rpcid: msg.Hdr.RPCID,
 	}
 	s.push(msg)
-	m.cache[rpcid] = m.list.PushFront(s)
+	m.cache[string(msg.Hdr.RPCID)] = m.list.PushFront(s)
 	return nil
 }
 
 // Remove a session by its rpcid from the cache.
-func (m *Manager) Remove(rpcid string) error {
+func (m *Manager) Remove(rpcid []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if !m.open {
 		return errors.New("manager: remove on closed manager")
 	}
-	item, hit := m.cache[rpcid]
+	item, hit := m.cache[string(rpcid)]
 	if !hit {
 		return errors.New("manager: session with rpcid does not exist")
 	}
@@ -164,7 +163,7 @@ func (m *Manager) Close() error {
 
 func (m *Manager) remove(item *list.Element) {
 	item.Value.(*session).close()
-	delete(m.cache, item.Value.(*session).rpcid)
+	delete(m.cache, string(item.Value.(*session).rpcid))
 	m.list.Remove(item)
 }
 
@@ -172,7 +171,7 @@ type session struct {
 	ch   chan<- *MessageCloser
 	done chan<- struct{}
 
-	rpcid string
+	rpcid []byte
 	exp   time.Time
 }
 

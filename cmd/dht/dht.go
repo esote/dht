@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/esote/dht"
+	"github.com/esote/dht/storer"
 )
 
 const usage = `usage: dht directory command options...
@@ -230,8 +231,13 @@ func start(dir string) (err error) {
 		maxSingleValueSize = 64 * 1024      // 64 mb
 		maxTotalSize       = 64 * 1024 * 64 // 4096 mb
 	)
-
-	storer, err := dht.NewFileStorer(filepath.Join(dir, "storer"),
+	if err = os.Mkdir(filepath.Join(dir, "storer"), 0700); err != nil {
+		if !os.IsExist(err) {
+			return err
+		}
+		err = nil
+	}
+	storer, err := storer.NewFileStorer(filepath.Join(dir, "storer"),
 		maxSingleValueSize, maxTotalSize)
 	if err != nil {
 		return err
