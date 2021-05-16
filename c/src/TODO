@@ -1,0 +1,6 @@
+cleaning up function on error might overwrite errno
+combine lset into map
+lset->list?
+validate message when decoding
+rename all id->publ
+rename all node_triple->node

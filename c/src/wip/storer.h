@@ -1,0 +1,15 @@
+#ifndef STORER_H
+#define STORER_H
+
+#include <stddef.h>
+#include <stdint.h>
+
+struct storer;
+
+struct storer * storer_new(const char *dir, size_t max_length, size_t max_count);
+int storer_free(struct storer *s);
+int storer_load(struct storer *s, const uint8_t *key, size_t key_length);
+int storer_store(struct storer *s, const uint8_t *key, size_t key_length, int value, size_t value_length);
+int storer_delete(struct storer *s, const uint8_t *key, size_t key_length);
+
+#endif /* STORER_H */

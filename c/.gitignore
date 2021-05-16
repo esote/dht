@@ -1,0 +1,4 @@
+*.out
+*.swp
+vgcore.*
+src/test/*.test
