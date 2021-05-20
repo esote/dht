@@ -1,21 +1,19 @@
 Message format
-	MAGIC [4 bytes]
 	VERSION [2 byte]
 	BODY [variable bytes]
 
 Body format
 	EPHEM_PUBL [32 bytes]
-	HKDF_SALT [64 bytes]
 	NONCE [24 bytes]
 	CIPHERTEXT [variable bytes]
 		BLOCK [262144 bytes, except the last block]
 		POLY1305_TAG [16 bytes]
 
 Body ciphertext format
-	HEADER [232 bytes]
+	HEADER [216 bytes]
 	PAYLOAD [variable bytes]
 
-Header format [232 bytes]
+Header format
 	NETWORK_ID [8 bytes]
 	MSG_TYPE [2 bytes]
 	ID [32 bytes]
@@ -24,16 +22,12 @@ Header format [232 bytes]
 	PORT [2 bytes]
 	RPC_ID [20 bytes]
 	EXPIRATION [8 bytes]
-	NONCE [16 bytes]
 	SIG [64 bytes]
 
 Ping payload format [0 bytes]
 
-Store payload format
-	KEY [64 bytes]
-	LENGTH [8 bytes]
-
 Data payload format
+	KEY [64 bytes]
 	LENGTH [8 bytes]
 	VALUE [LENGTH bytes]
 
@@ -50,7 +44,3 @@ Find node resp payload format
 
 Find value payload format
 	KEY [64 bytes]
-
-Error payload format
-	LENGTH [1 byte]
-	MSG [LENGTH bytes]

@@ -11,6 +11,10 @@
 
 #define BUFFER_SIZE 16384
 
+static ssize_t wrap_read(void *buf, size_t count, void *ctx);
+static ssize_t wrap_write(const void *buf, size_t count, void *ctx);
+static int wrap_close(void *ctx);
+
 ssize_t
 io_read(const struct io *io, void *buf, size_t count)
 {
@@ -135,4 +139,34 @@ copy_n(const struct io *in, const struct io *out, size_t n)
 		return -1;
 	}
 	return 0;
+}
+
+void
+wrap_fd(struct io *io, int fd)
+{
+	io->read = wrap_read;
+	io->write = wrap_write;
+	io->close = wrap_close;
+	io->ctx = &fd;
+}
+
+static ssize_t
+wrap_read(void *buf, size_t count, void *ctx)
+{
+	int *fd = ctx;
+	return read2(*fd, buf, count);
+}
+
+static ssize_t
+wrap_write(const void *buf, size_t count, void *ctx)
+{
+	int *fd = ctx;
+	return write2(*fd, buf, count);
+}
+
+static int
+wrap_close(void *ctx)
+{
+	int *fd = ctx;
+	return close(*fd);
 }

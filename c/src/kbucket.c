@@ -1,19 +1,19 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
-#include <assert.h>
-#include "proto.h"
+
 #include "kbucket.h"
+#include "proto.h"
 #include "util.h"
 
 struct kbucket {
 	size_t k;
 	size_t n;
-	struct node_triple *nodes;
+	struct node *nodes;
 };
 
 struct kbucket *
-kb_new(size_t k)
+kbucket_new(size_t k)
 {
 	struct kbucket *kb;
 	if (k == 0) {
@@ -32,14 +32,14 @@ kb_new(size_t k)
 }
 
 void
-kb_free(struct kbucket *kb)
+kbucket_free(struct kbucket *kb)
 {
 	free(kb->nodes);
 	free(kb);
 }
 
-const struct node_triple *
-kb_load(const struct kbucket *kb, const uint8_t id[NODE_ID_SIZE])
+const struct node *
+kbucket_load(const struct kbucket *kb, const uint8_t id[NODE_ID_SIZE])
 {
 	size_t i;
 	for (i = 0; i < kb->n; i++) {
@@ -50,8 +50,8 @@ kb_load(const struct kbucket *kb, const uint8_t id[NODE_ID_SIZE])
 	return NULL;
 }
 
-const struct node_triple *
-kb_oldest(const struct kbucket *kb)
+const struct node *
+kbucket_oldest(const struct kbucket *kb)
 {
 	if (kb->n == 0) {
 		return NULL;
@@ -60,9 +60,9 @@ kb_oldest(const struct kbucket *kb)
 }
 
 int
-kb_store(struct kbucket *kb, const struct node_triple *n)
+kbucket_store(struct kbucket *kb, const struct node *n)
 {
-	struct node_triple tmp;
+	struct node tmp;
 	size_t i;
 	for (i = 0; i < kb->n; i++) {
 		if (memcmp(kb->nodes[i].id, n->id, NODE_ID_SIZE) == 0) {
@@ -86,10 +86,10 @@ kb_store(struct kbucket *kb, const struct node_triple *n)
 	return 0;
 }
 
-struct node_triple *
-kb_remove(struct kbucket *kb, const uint8_t id[NODE_ID_SIZE])
+struct node *
+kbucket_remove(struct kbucket *kb, const uint8_t id[NODE_ID_SIZE])
 {
-	struct node_triple *n;
+	struct node *n;
 	size_t i;
 	for (i = 0; i < kb->n; i++) {
 		if (memcmp(kb->nodes[i].id, id, NODE_ID_SIZE) == 0) {
@@ -107,11 +107,11 @@ kb_remove(struct kbucket *kb, const uint8_t id[NODE_ID_SIZE])
 	return NULL;
 }
 
-struct node_triple *
-kb_append(const struct kbucket *kb, struct node_triple *s, size_t *len, size_t n)
+struct node *
+kbucket_append(const struct kbucket *kb, struct node *s, size_t *len, size_t n)
 {
 	size_t i, j;
-	struct node_triple *dst;
+	struct node *dst;
 	if (len == NULL) {
 		return NULL;
 	}

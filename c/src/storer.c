@@ -13,10 +13,11 @@
 #include <unistd.h>
 
 #include "storer.h"
+#include "io.h"
 
 #include "util.h"
 
-static int store_file(struct storer *s, char *file, int value, size_t value_length);
+static int store_file(struct storer *s, char *file, struct io *value, size_t value_length);
 static char *encode_key(const struct storer *s, const uint8_t *key, size_t key_length);
 static int count_files(const char *dir, size_t *count);
 static bool file_is_regular(const struct dirent *ent);
@@ -75,20 +76,29 @@ storer_free(struct storer *s)
 }
 
 int
-storer_load(struct storer *s, const uint8_t *key, size_t key_length)
+storer_load(struct storer *s, const uint8_t *key, size_t key_length, size_t *value_length)
 {
+	struct stat sb;
 	char *file;
 	int fd;
 	if ((file = encode_key(s, key, key_length)) == NULL) {
 		return -1;
 	}
+
 	fd = open(file, O_RDONLY);
 	free(file);
+	if (fd == -1) {
+		return -1;
+	}
+	if (fstat(fd, &sb) == -1) {
+		return -1;
+	}
+	*value_length = (size_t)sb.st_size;
 	return fd;
 }
 
 int
-storer_store(struct storer *s, const uint8_t *key, size_t key_length, int value, size_t value_length)
+storer_store(struct storer *s, const uint8_t *key, size_t key_length, struct io *value, size_t value_length)
 {
 	char *file;
 	bool can_store;
@@ -103,7 +113,7 @@ storer_store(struct storer *s, const uint8_t *key, size_t key_length, int value,
 	if ((file = encode_key(s, key, key_length)) == NULL) {
 		return -1;
 	}
-	if (value == -1) {
+	if (value == NULL) {
 		/* check if file could be stored */
 		can_store = access(file, F_OK) == -1 && errno != ENOENT;
 		errno = 0;
@@ -152,13 +162,15 @@ storer_delete(struct storer *s, const uint8_t *key, size_t key_length)
 }
 
 static int
-store_file(struct storer *s, char *file, int value, size_t value_length)
+store_file(struct storer *s, char *file, struct io *value, size_t value_length)
 {
+	struct io fd_io;
 	int fd;
 	if ((fd = open(file, O_WRONLY|O_CREAT|O_EXCL, 0600)) == -1) {
 		return -1;
 	}
-	if (copy(fd, value, value_length) == -1) {
+	wrap_fd(&fd_io, fd);
+	if (copy_n(&fd_io, value, value_length) == -1) {
 		/* XXX: could overwrite errno, check other places too */
 		(void)close(fd);
 		return -1;

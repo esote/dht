@@ -1,6 +1,6 @@
 cleaning up function on error might overwrite errno
 combine lset into map
 lset->list?
-validate message when decoding
 rename all id->publ
-rename all node_triple->node
+unit test sha3 against example outputs https://csrc.nist.gov/projects/cryptographic-standards-and-guidelines/example-values
+check rpc id during sessions

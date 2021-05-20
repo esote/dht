@@ -1,5 +1,9 @@
 PROG = dht
-SRCS = test/main2.c io.c crypto.c proto.c util.c bytes.c dht.c kbucket.c rtable.c
+
+SRCS = test/main2.c
+SRCS += dht.c
+SRCS += io.c crypto.c proto.c util.c bytes.c kbucket.c rtable.c storer.c listen.c crypto_sha3.c
+
 FLAGS = -D_POSIX_C_SOURCE=1
 FLAGS += -pthread -lsodium
 FLAGS += -Wall -pedantic -std=c99 \

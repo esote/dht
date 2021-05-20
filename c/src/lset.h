@@ -1,5 +1,5 @@
-#ifndef LSET_H
-#define LSET_H
+#ifndef DHT_LSET_H
+#define DHT_LSET_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -14,4 +14,4 @@ void *lset_remove(struct lset *set, void *data);
 void lset_iter(struct lset *set, bool (*it)(void *data, void *ctx), void *ctx);
 size_t lset_len(struct lset *set);
 
-#endif /* LSET_H */
+#endif /* DHT_LSET_H */

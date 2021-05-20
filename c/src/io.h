@@ -20,4 +20,6 @@ ssize_t write2(int fd, const void *buf, size_t count);
 
 int copy_n(const struct io *in, const struct io *out, size_t n);
 
+void wrap_fd(struct io *io, int fd);
+
 #endif /* DHT_IO_H */
