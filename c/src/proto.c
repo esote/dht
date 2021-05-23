@@ -470,7 +470,7 @@ read_payload_data(struct data_payload *p, struct io *in)
 
 	assert(b == data + DATA_PL_SIZE);
 
-	/* in kept open, deferenced as data value */
+	/* in kept open, referenced as data value */
 	p->value = in;
 	return 0;
 }

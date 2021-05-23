@@ -29,4 +29,13 @@ struct dht {
 	unsigned char priv[PRIV_SIZE];
 };
 
+int send_message(const struct dht *dht, int afd, uint16_t msg_type,
+	const uint8_t rpc_id[RPC_ID_SIZE], const union payload *p,
+	const uint8_t target_id[NODE_ID_SIZE]);
+
+int connect_remote(const struct in6_addr *ip, uint16_t port);
+int listen_local(uint16_t port);
+
+int dht_update(struct dht *dht, struct node *target);
+
 #endif /* DHT_INTERNAL_H */

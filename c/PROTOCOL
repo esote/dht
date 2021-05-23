@@ -4,7 +4,7 @@ Message format
 
 Body format
 	EPHEM_PUBL [32 bytes]
-	NONCE [24 bytes]
+	NONCE [8 bytes]
 	CIPHERTEXT [variable bytes]
 		BLOCK [262144 bytes, except the last block]
 		POLY1305_TAG [16 bytes]

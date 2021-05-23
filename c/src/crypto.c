@@ -599,3 +599,9 @@ verify_key_dynamic(const unsigned char publ[PUBL_SIZE],
 	sha3_final(&state, h);
 	return leading_zeros(h, SHA3_512_SIZE) >= C2;
 }
+
+void
+crypto_rand(void *buf, size_t len)
+{
+	randombytes_buf(buf, len);
+}

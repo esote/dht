@@ -91,6 +91,7 @@ storer_load(struct storer *s, const uint8_t *key, size_t key_length, size_t *val
 		return -1;
 	}
 	if (fstat(fd, &sb) == -1) {
+		(void)close(fd);
 		return -1;
 	}
 	*value_length = (size_t)sb.st_size;
