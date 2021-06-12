@@ -36,8 +36,8 @@
 #error block size invalid
 #endif
 
-#define C1 23
-#define C2 24
+#define C1 13 /* 23 */
+#define C2 14 /* 24 */
 
 struct encrypt_writer {
 	int out;

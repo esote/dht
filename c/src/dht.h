@@ -11,8 +11,12 @@
 struct dht;
 
 struct dht_config {
-	/* TODO */
-	void *x;
+	uint8_t network_id[NETWORK_ID_SIZE];
+	struct in6_addr *ip;
+	uint16_t port;
+	time_t timeout;
+
+	struct storer *storer;
 };
 
 struct dht *dht_new(const struct dht_config *config);

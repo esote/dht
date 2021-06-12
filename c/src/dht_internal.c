@@ -32,7 +32,7 @@ send_message(const struct dht *dht, int afd, uint16_t msg_type,
 	if ((now = time(NULL)) == -1) {
 		return -1;
 	}
-	m.hdr.expiration = now + dht->fixed_timeout; /* TODO: might overflow */
+	m.hdr.expiration = now + dht->timeout; /* TODO: might overflow */
 
 	if (p == NULL) {
 		(void)memset(&m.payload, 0, sizeof(m.payload));
@@ -77,7 +77,7 @@ listen_local(uint16_t port)
 	}
 	addr.sin6_family = AF_INET6;
 	addr.sin6_port = htons(port);
-	addr.sin6_addr = in6addr_any;
+	addr.sin6_addr = in6addr_loopback;
 	if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
 		(void)close(fd);
 		return -1;
