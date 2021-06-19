@@ -58,7 +58,7 @@ dht_new(const struct dht_config *config)
 			while (i-- > 0) {
 				(void)pthread_cancel(dht->listeners[i]);
 			}
-			rtable_free(dht->rtable);
+			(void)rtable_close(dht->rtable);
 			free(dht);
 			return NULL;
 		}
@@ -149,7 +149,9 @@ dht_close(struct dht *dht)
 			ret = -1;
 		}
 	}
-	rtable_free(dht->rtable);
+	if (rtable_close(dht->rtable) == -1) {
+		ret = -1;
+	}
 	free(dht);
 	return ret;
 }
