@@ -92,9 +92,9 @@ base64_url_nopad(void *d, const void *s, size_t len)
 	if (remain == 0) {
 		return;
 	}
-	val = src[si+0] << 16;
+	val = (unsigned int)src[si+0] << 16;
 	if (remain == 2) {
-		val |= src[si+1] << 8;
+		val |= (unsigned int)src[si+1] << 8;
 	}
 	dst[di+0] = url_table[val>>18&0x3F];
 	dst[di+1] = url_table[val>>12&0x3F];
@@ -102,4 +102,3 @@ base64_url_nopad(void *d, const void *s, size_t len)
 		dst[di+2] = url_table[val>>6&0x3F];
 	}
 }
-
