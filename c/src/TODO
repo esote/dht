@@ -8,3 +8,5 @@ logger
 encrypt/write dht publ, priv (enc with pass from config)
 validate config
 need to ignore SIGPIPE?
+*ctx vs *arg naming
+which kbucket and rtable functions are needed

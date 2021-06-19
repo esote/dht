@@ -1,26 +1,68 @@
 #include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+
 #include "../dht.h"
 #include "../dht_internal.h"
 #include "../storer.h"
-#include <unistd.h>
+
+static void
+print_hex(uint8_t *b, size_t n)
+{
+	size_t i;
+	for (i = 0; i < n; i++) {
+		printf("%02X", b[i]);
+	}
+	printf("\n");
+}
+
+static void
+from_hex(uint8_t *dst, const char *src, size_t n)
+{
+	size_t i;
+	for (i = 0; i < n; i++) {
+		sscanf(src, "%2hhx", &dst[i]);
+		src += 2;
+	}
+}
 
 int
 main(int argc, char *argv[])
 {
+	if (argc < 3) {
+		return 1;
+	}
+
 	struct dht_config config = {
 		.network_id = {1},
-		.port = 8080,
-		.timeout = 3600
+		.timeout = 3600000
 	};
+
 	struct in6_addr ip;
 	(void)memcpy(ip.s6_addr, in6addr_loopback.s6_addr, sizeof(ip.s6_addr));
 	config.ip = &ip;
-	if ((config.storer = storer_new("/tmp/dht", 1600, 1600)) == NULL) {
-		return 1;
+
+	config.port = (uint16_t)strtol(argv[2], NULL, 10);
+
+	if ((config.storer = storer_new(argv[1], 1600, 1600)) == NULL) {
+		return 2;
 	}
+
 	struct dht *dht = dht_new(&config);
 	assert(dht != NULL);
-	int ret = dht_bootstrap(dht, dht->id, &dht->ip, dht->port);
-	sleep(100000);
+	print_hex(dht->id, NODE_ID_SIZE);
+
+	if (argc < 5) {
+		for (;;) { pause(); }
+	}
+
+	uint16_t port = (uint16_t)strtol(argv[3], NULL, 10);
+
+	uint8_t id[NODE_ID_SIZE];
+	from_hex(id, argv[4], NODE_ID_SIZE);
+	int ret = dht_bootstrap(dht, id, &dht->ip, port);
+	assert(dht_close(dht) != -1);
+	return 0;
 }

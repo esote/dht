@@ -420,7 +420,7 @@ read_header(struct header *hdr, const struct io *in)
 		return -1;
 	}
 
-	if (!sign_verify(b, data, HDR_SIZE-SIG_SIZE, hdr->id)) {
+	if (!sign_verify(b, data, HDR_SIZE - SIG_SIZE, hdr->id)) {
 		return -1;
 	}
 	b += SIG_SIZE;

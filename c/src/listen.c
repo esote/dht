@@ -150,7 +150,7 @@ send_fnode_closest(const struct dht *dht, int afd, const uint8_t id[NODE_ID_SIZE
 	} else if (k == 0) {
 		return -1;
 	}
-	if ((closest = rtable_closest(dht->rtable, id, k, &len)) == NULL) {
+	if (rtable_closest(dht->rtable, id, k, &closest, &len) == -1) {
 		return -1;
 	}
 	assert(len <= UINT8_MAX);

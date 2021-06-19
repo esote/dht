@@ -1,5 +1,6 @@
 #define _GNU_SOURCE /* need qsort_r */
 #include <assert.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -70,67 +71,65 @@ rtable_oldest(const struct rtable *rt, const uint8_t id[NODE_ID_SIZE])
 }
 
 struct node *
-rtable_replace_oldest(struct rtable *rt, const struct node *n)
+rtable_replace_oldest(struct rtable *rt, const struct node *n,
+	bool (*ping)(const struct node *n, void *arg), void *arg)
 {
 	const struct node *oldest;
 	struct node *removed;
 	struct kbucket *kb;
 	kb = rt->buckets[bucket_index(rt, n->id)];
+	if (kbucket_store(kb, n) != -1) {
+		return NULL;
+	}
 	if ((oldest = kbucket_oldest(kb)) == NULL) {
 		return NULL;
 	}
-	if ((removed = kbucket_remove(kb, oldest->id)) == NULL) {
+	if (ping(oldest, arg)) {
+		/* Oldest is still alive, refresh it */
+		(void)kbucket_store(kb, oldest);
 		return NULL;
 	}
-	assert(removed->id == oldest->id);
+	assert((removed = kbucket_remove(kb, oldest->id)) != NULL);
+	assert(memcmp(removed->id, oldest->id, NODE_ID_SIZE) == 0);
 	assert(kbucket_store(kb, n) != -1);
 	return removed;
 }
 
-struct node *
-rtable_closest(const struct rtable *rt, const uint8_t id[NODE_ID_SIZE], size_t k, size_t *len)
+int
+rtable_closest(const struct rtable *rt, const uint8_t id[NODE_ID_SIZE], size_t k,
+	struct node **closest, size_t *len)
 {
-	struct node *closest;
-	struct node *tmp;
 	size_t dist;
 	size_t i;
 	size_t llen;
 	uint8_t id_copy[NODE_ID_SIZE];
-
-	if (len == NULL) {
-		return NULL;
+	if (len == NULL || closest == NULL) {
+		return -1;
 	}
-
 	dist = bucket_index(rt, id);
-	closest = NULL;
+	*closest = NULL;
 	llen = 0;
 	*len = 0;
-
-	tmp = kbucket_append(rt->buckets[dist], closest, &llen, k);
-	if (tmp == NULL) {
-		free(closest);
-		return NULL;
+	if (kbucket_append(rt->buckets[dist], closest, &llen, k) == -1) {
+		free(*closest);
+		return -1;
 	}
-	closest = tmp;
-
-	for (i = 1; (dist - i >= 0 /* TODO: overflow? */ || dist+i < BUCKET_COUNT) && llen < k; i++) {
-		if (dist-i >= 0) {
-			tmp = kbucket_append(rt->buckets[dist-i], closest, &llen, k - llen);
+	for (i = 1; (dist >= i || dist+i < BUCKET_COUNT) && llen < k; i++) {
+		if (dist >= i && kbucket_append(rt->buckets[dist-i], closest,
+			&llen,  k - llen) == -1) {
+			free(*closest);
+			return -1;
 		}
-		if (dist+i < BUCKET_COUNT) {
-			tmp = kbucket_append(rt->buckets[dist+i], closest, &llen, k - llen);
+		if (dist+i < BUCKET_COUNT && kbucket_append(rt->buckets[dist+i],
+			closest, &llen, k - llen) == -1) {
+			free(*closest);
+			return -1;
 		}
-		if (tmp == NULL) {
-			free(closest);
-			return NULL;
-		}
-		closest = tmp;
 	}
 
 	(void)memcpy(id_copy, id, NODE_ID_SIZE);
-	sort_closest(closest, llen, id_copy);
-	*len = llen;
-	return closest;
+	sort_closest(*closest, llen, id_copy);
+	return 0;
 }
 
 static void

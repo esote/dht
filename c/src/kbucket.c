@@ -107,26 +107,28 @@ kbucket_remove(struct kbucket *kb, const uint8_t id[NODE_ID_SIZE])
 	return NULL;
 }
 
-struct node *
-kbucket_append(const struct kbucket *kb, struct node *s, size_t *len, size_t n)
+int
+kbucket_append(const struct kbucket *kb, struct node **s, size_t *len, size_t n)
 {
 	size_t i, j;
-	struct node *dst;
-	if (len == NULL) {
-		return NULL;
+	struct node *dst, *tmp;
+	if (len == NULL || s == NULL) {
+		return -1;
 	}
 	i = min(kb->n, n);
 	if (i == 0) {
-		return s;
+		return 0;
 	}
-	if ((s = realloc(s, sizeof(*s) * (*len + i))) == NULL) {
-		return NULL;
+	tmp = realloc(*s, sizeof(**s) * (*len + i));
+	if (tmp == NULL && *len + i != 0) {
+		return -1;
 	}
-	dst = s + *len;
+	*s = tmp;
+	dst = *s + *len;
 	/* copy kb->nodes from back to front */
 	for (j = 0; j < i; j++) {
 		(void)memcpy(&dst[j], &kb->nodes[kb->n - j - 1], sizeof(*dst));
 	}
 	*len += i;
-	return s;
+	return 0;
 }

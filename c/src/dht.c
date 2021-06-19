@@ -136,3 +136,20 @@ dht_bootstrap(struct dht *dht, const uint8_t id[NODE_ID_SIZE],
 	}
 	return close(afd);
 }
+
+int
+dht_close(struct dht *dht)
+{
+	size_t i;
+	int ret = 0;
+	for (i = 0; i < LISTENER_COUNT; i++) {
+		if (pthread_cancel(dht->listeners[i]) != 0) {
+			/* TODO: does cancelling close the sockets?
+			send close on channel instead? */
+			ret = -1;
+		}
+	}
+	rtable_free(dht->rtable);
+	free(dht);
+	return ret;
+}

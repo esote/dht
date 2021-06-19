@@ -14,6 +14,7 @@ const struct node *kbucket_load(const struct kbucket *kb, const uint8_t id[NODE_
 const struct node *kbucket_oldest(const struct kbucket *kb);
 int kbucket_store(struct kbucket *kb, const struct node *n);
 struct node *kbucket_remove(struct kbucket *kb, const uint8_t id[NODE_ID_SIZE]);
-struct node *kbucket_append(const struct kbucket *kb, struct node *s, size_t *len, size_t n);
+int kbucket_append(const struct kbucket *kb, struct node **s, size_t *len,
+	size_t n);
 
 #endif /* DHT_KBUCKET_H */

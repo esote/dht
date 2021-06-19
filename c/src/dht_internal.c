@@ -11,6 +11,7 @@
 #define LISTEN_BACKLOG 64
 
 static int socket_reuse(int fd);
+static bool ping_node(const struct node *n, void *arg);
 
 int
 send_message(const struct dht *dht, int afd, uint16_t msg_type,
@@ -77,7 +78,7 @@ listen_local(uint16_t port)
 	}
 	addr.sin6_family = AF_INET6;
 	addr.sin6_port = htons(port);
-	addr.sin6_addr = in6addr_loopback;
+	addr.sin6_addr = in6addr_any;
 	if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
 		(void)close(fd);
 		return -1;
@@ -92,7 +93,48 @@ listen_local(uint16_t port)
 int
 dht_update(struct dht *dht, struct node *target)
 {
-	return -1; /* TODO */
+	struct node *replaced;
+	replaced = rtable_replace_oldest(dht->rtable, target, ping_node, dht);
+	if (replaced != NULL) {
+		free(replaced);
+	}
+	return 0;
+}
+
+/* TODO: differentiate between internal error and remote error? */
+static bool
+ping_node(const struct node *n, void *arg)
+{
+	struct dht *dht = arg;
+	uint8_t rpc_id[RPC_ID_SIZE];
+	int afd;
+	struct message *msg;
+	bool alive;
+
+	if ((afd = connect_remote(&n->ip, n->port)) == -1) {
+		return false;
+	}
+	crypto_rand(rpc_id, RPC_ID_SIZE);
+	if (send_message(dht, afd, TYPE_PING, rpc_id, NULL, n->id) == -1) {
+		(void)close(afd);
+		return false;
+	}
+	if ((msg = message_decode(afd, dht->id, dht->priv)) == NULL) {
+		(void)close(afd);
+		return false;
+	}
+
+	alive = msg->hdr.msg_type == TYPE_PING
+		&& memcmp(msg->hdr.rpc_id, rpc_id, RPC_ID_SIZE) == 0;
+
+	if (message_close(msg) == -1) {
+		(void)close(afd);
+		return false;
+	}
+	if (close(afd) == -1) {
+		return false;
+	}
+	return alive;
 }
 
 static int

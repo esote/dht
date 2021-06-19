@@ -22,5 +22,6 @@ struct dht_config {
 struct dht *dht_new(const struct dht_config *config);
 int dht_bootstrap(struct dht *dht, const uint8_t id[NODE_ID_SIZE],
 	const struct in6_addr *ip, uint16_t port);
+int dht_close(struct dht *dht);
 
 #endif /* DHT_H */

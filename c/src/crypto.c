@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <string.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #include "bytes.h"
 #include "crypto.h"
@@ -391,7 +392,7 @@ decrypt_flush(struct decrypt_reader *r)
 {
 	unsigned long long plain_len;
 	ssize_t rr;
-	rr = read2(r->in, r->cipher + r->cn,
+	rr = read(r->in, r->cipher + r->cn,
 		(BLOCK_SIZE + CIPHER_OVERHEAD) - r->cn);
 	if (rr == -1) {
 		return -1;
@@ -434,7 +435,7 @@ bool
 sign_verify(const unsigned char sig[SIG_SIZE], const void *msg, size_t msg_len,
 	const unsigned char publ[PUBL_SIZE])
 {
-	return crypto_sign_ed25519_verify_detached(sig, msg, msg_len, publ);
+	return crypto_sign_ed25519_verify_detached(sig, msg, msg_len, publ) != -1;
 }
 
 int
