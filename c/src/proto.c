@@ -516,7 +516,8 @@ read_payload_fnode_resp(struct fnode_resp_payload *p, const struct io *in)
 
 	assert(b == data + FNODE_RESP_PL_SIZE);
 
-	if ((p->nodes = malloc(NODE_SIZE * (size_t)p->count)) == NULL) {
+	p->nodes = malloc(NODE_SIZE * (size_t)p->count);
+	if (p->nodes == NULL && p->count != 0) {
 		return -1;
 	}
 	for (i = 0; i < p->count; i++) {
