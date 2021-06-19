@@ -63,6 +63,8 @@ main(int argc, char *argv[])
 	uint8_t id[NODE_ID_SIZE];
 	from_hex(id, argv[4], NODE_ID_SIZE);
 	int ret = dht_bootstrap(dht, id, &dht->ip, port);
+	assert(ret != -1);
 	assert(dht_close(dht) != -1);
+	assert(storer_free(config.storer) != -1);
 	return 0;
 }
