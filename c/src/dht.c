@@ -1,3 +1,5 @@
+#include <assert.h>
+#include <errno.h>
 #include <netinet/in.h>
 #include <signal.h>
 #include <stddef.h>
@@ -9,6 +11,8 @@
 #include "dht_internal.h"
 #include "listen.h"
 #include "proto.h"
+
+static int dht_join_listeners(struct dht *dht, size_t i);
 
 struct dht *
 dht_new(const struct dht_config *config)
@@ -52,12 +56,16 @@ dht_new(const struct dht_config *config)
 		return NULL;
 	}
 
+	if (sem_init(&dht->listen_exit, 0, 0) == -1) {
+		(void)rtable_close(dht->rtable);
+		free(dht);
+		return NULL;
+	}
 	/* Begin listening for incoming requests */
 	for (i = 0; i < LISTENER_COUNT; i++) {
 		if (pthread_create(&dht->listeners[i], NULL, listener_start, dht) != 0) {
-			while (i-- > 0) {
-				(void)pthread_cancel(dht->listeners[i]);
-			}
+			(void)dht_join_listeners(dht, i);
+			(void)sem_destroy(&dht->listen_exit);
 			(void)rtable_close(dht->rtable);
 			free(dht);
 			return NULL;
@@ -65,6 +73,27 @@ dht_new(const struct dht_config *config)
 	}
 
 	return dht;
+}
+
+static int
+dht_join_listeners(struct dht *dht, size_t i)
+{
+	int ret;
+	void *listen_ret;
+	size_t j;
+	ret = 0;
+	for (j = 0; j < i; j++) {
+		assert(sem_post(&dht->listen_exit) == 0);
+	}
+	for (j = 0; j < i; j++) {
+		if ((errno = pthread_join(dht->listeners[j], &listen_ret)) != 0) {
+			ret = -1;
+		}
+		if (listen_ret == NULL || *(int *)listen_ret != 0) {
+			ret = -1;
+		}
+	}
+	return ret;
 }
 
 int
@@ -140,14 +169,12 @@ dht_bootstrap(struct dht *dht, const uint8_t id[NODE_ID_SIZE],
 int
 dht_close(struct dht *dht)
 {
-	size_t i;
 	int ret = 0;
-	for (i = 0; i < LISTENER_COUNT; i++) {
-		if (pthread_cancel(dht->listeners[i]) != 0) {
-			/* TODO: does cancelling close the sockets?
-			send close on channel instead? */
-			ret = -1;
-		}
+	if (dht_join_listeners(dht, LISTENER_COUNT) == -1) {
+		ret = -1;
+	}
+	if (sem_destroy(&dht->listen_exit) == -1) {
+		ret = -1;
 	}
 	if (rtable_close(dht->rtable) == -1) {
 		ret = -1;

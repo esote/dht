@@ -3,6 +3,7 @@
 
 #include <netinet/in.h>
 #include <pthread.h>
+#include <semaphore.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <time.h>
@@ -26,6 +27,7 @@ struct dht {
 	time_t timeout;
 
 	pthread_t listeners[LISTENER_COUNT];
+	sem_t listen_exit;
 
 	struct rtable *rtable;
 	struct storer *storer;

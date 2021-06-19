@@ -69,7 +69,7 @@ listen_local(uint16_t port)
 	int fd;
 	struct sockaddr_in6 addr = {0};
 
-	if ((fd = socket(AF_INET6, SOCK_STREAM, 0)) == -1) {
+	if ((fd = socket(AF_INET6, SOCK_STREAM | SOCK_NONBLOCK, 0)) == -1) {
 		return -1;
 	}
 	if (socket_reuse(fd) == -1) {
@@ -140,7 +140,9 @@ ping_node(const struct node *n, void *arg)
 static int
 socket_reuse(int fd)
 {
-	/* TODO: reuse port? */
 	int opt = 1;
+	if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt)) == -1) {
+		return 1;
+	}
 	return setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 }

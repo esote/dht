@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <netinet/in.h>
+#include <semaphore.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -18,6 +19,7 @@
 
 static int listener_accept(struct dht *dht, int sfd);
 static int listener_work(struct dht *dht, int afd);
+static bool listener_should_exit(struct dht *dht);
 static int respond_msg(struct dht *dht, int afd, const struct message *msg);
 static int respond_ping(const struct dht *dht, int afd, const struct message *msg);
 static int respond_data(struct dht *dht, int afd, const struct message *msg);
@@ -55,6 +57,9 @@ listener_accept(struct dht *dht, int sfd)
 	int afd;
 	for (;;) {
 		/* TODO: setsockopts timeouts */
+		if (listener_should_exit(dht)) {
+			return 0;
+		}
 		if ((afd = accept(sfd, NULL, NULL)) == -1) {
 			if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
 				errno = 0;
@@ -67,6 +72,27 @@ listener_accept(struct dht *dht, int sfd)
 		}
 		if (close(afd) == -1) {
 			return -1;
+		}
+	}
+}
+
+static bool
+listener_should_exit(struct dht *dht)
+{
+	for (;;) {
+		if (sem_trywait(&dht->listen_exit) == 0) {
+			return true;
+		}
+		switch (errno) {
+		case EINTR:
+			/* trywait was interrupted */
+			continue;
+		case EAGAIN:
+			/* exit not signalled */
+			return false;
+		default:
+			/* unknown error, exit to be safe */
+			return true;
 		}
 	}
 }
