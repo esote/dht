@@ -10,12 +10,6 @@
 #define PUBL_SIZE crypto_sign_ed25519_PUBLICKEYBYTES
 #define PRIV_SIZE crypto_sign_ed25519_SECRETKEYBYTES
 
-/* Encrypt */
-
-struct io *encrypt(int out, const unsigned char publ[PUBL_SIZE]);
-struct io *decrypt(int in, const unsigned char publ[PUBL_SIZE],
-	const unsigned char priv[PRIV_SIZE]);
-
 /* Sign */
 
 #define SIG_SIZE crypto_sign_BYTES

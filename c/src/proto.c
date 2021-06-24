@@ -1,12 +1,16 @@
 #include <assert.h>
+#include <errno.h>
 #include <netinet/in.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "bytes.h"
 #include "crypto.h"
+#include "crypto_stream.h"
 #include "io.h"
 #include "proto.h"
 
@@ -25,23 +29,23 @@
 #define FVAL_PL_SIZE KEY_SIZE
 
 static int write_prebody(const struct message *m, int out);
-static int write_header(const struct header *hdr, const struct io *out,
+static int write_header(const struct header *hdr, int out,
 	const unsigned char priv[PRIV_SIZE]);
-static int write_payload(uint16_t type, const union payload *p, const struct io *out);
-static int write_payload_data(const struct data_payload *p, const struct io *out);
-static int write_payload_fnode(const struct fnode_payload *p, const struct io *out);
-static int write_payload_fnode_resp(const struct fnode_resp_payload *p, const struct io *out);
-static int write_node(const struct node *n, const struct io *out);
-static int write_payload_fval(const struct fval_payload *p, const struct io *out);
+static int write_payload(uint16_t type, const union payload *p, int out);
+static int write_payload_data(const struct data_payload *p, int out);
+static int write_payload_fnode(const struct fnode_payload *p, int out);
+static int write_payload_fnode_resp(const struct fnode_resp_payload *p, int out);
+static int write_node(const struct node *n, int out);
+static int write_payload_fval(const struct fval_payload *p, int out);
 
 static int read_prebody(struct message *m, int in);
-static int read_header(struct header *hdr, const struct io *in);
-static int read_payload(uint16_t type, union payload *p, struct io *in);
-static int read_payload_data(struct data_payload *p, struct io *in);
-static int read_payload_fnode(struct fnode_payload *p, const struct io *in);
-static int read_payload_fnode_resp(struct fnode_resp_payload *p, const struct io *in);
-static int read_node(struct node *n, const struct io *in);
-static int read_payload_fval(struct fval_payload *p, const struct io *in);
+static int read_header(struct header *hdr, int in);
+static int read_payload(uint16_t type, union payload *p, int in);
+static int read_payload_data(struct data_payload *p, int in);
+static int read_payload_fnode(struct fnode_payload *p, int in);
+static int read_payload_fnode_resp(struct fnode_resp_payload *p, int in);
+static int read_node(struct node *n, int in);
+static int read_payload_fval(struct fval_payload *p, int in);
 static bool decode_keep_open(const struct message *m);
 
 int
@@ -49,22 +53,38 @@ message_encode(const struct message *m, int out,
 	const unsigned char priv[PRIV_SIZE],
 	const unsigned char target_publ[PUBL_SIZE])
 {
-	struct io *enc;
+	int in;
+	pid_t child;
+	int status;
+
 	if (write_prebody(m, out) == -1) {
 		return -1;
 	}
-	if ((enc = encrypt(out, target_publ)) == NULL) {
+
+	if ((child = encrypt(&in, out, target_publ)) == -1) {
 		return -1;
 	}
-	if (write_header(&m->hdr, enc, priv) == -1) {
-		(void)io_close(enc);
+
+	if (write_header(&m->hdr, in, priv) == -1) {
+		(void)close(in);
 		return -1;
 	}
-	if (write_payload(m->hdr.msg_type, &m->payload, enc) == -1) {
-		(void)io_close(enc);
+	if (write_payload(m->hdr.msg_type, &m->payload, in) == -1) {
+		(void)close(in);
 		return -1;
 	}
-	return io_close(enc);
+
+	if (close(in) == -1) {
+		return -1;
+	}
+	while (waitpid(child, &status, 0) == -1) {
+		if (errno == EINTR) {
+			errno = 0;
+			continue;
+		}
+		return -1;
+	}
+	return 0;
 }
 
 static int
@@ -101,7 +121,7 @@ valid_msg_type(uint16_t msg_type) {
 }
 
 static int
-write_header(const struct header *hdr, const struct io *out,
+write_header(const struct header *hdr, int out,
 	const unsigned char priv[PRIV_SIZE])
 {
 	uint8_t data[HDR_SIZE];
@@ -155,14 +175,14 @@ write_header(const struct header *hdr, const struct io *out,
 	b += SIG_SIZE;
 
 	assert(b == data + HDR_SIZE);
-	if (io_write(out, data, HDR_SIZE) != HDR_SIZE) {
+	if (write2(out, data, HDR_SIZE) != HDR_SIZE) {
 		return -1;
 	}
 	return 0;
 }
 
 static int
-write_payload(uint16_t type, const union payload *p, const struct io *out)
+write_payload(uint16_t type, const union payload *p, int out)
 {
 	switch (type) {
 	case TYPE_PING:
@@ -181,7 +201,7 @@ write_payload(uint16_t type, const union payload *p, const struct io *out)
 }
 
 static int
-write_payload_data(const struct data_payload *p, const struct io *out)
+write_payload_data(const struct data_payload *p, int out)
 {
 	uint8_t data[DATA_PL_SIZE];
 	uint8_t *b;
@@ -197,7 +217,7 @@ write_payload_data(const struct data_payload *p, const struct io *out)
 	b += sizeof(p->length);
 
 	assert(b == data + DATA_PL_SIZE);
-	if (io_write(out, data, DATA_PL_SIZE) != DATA_PL_SIZE) {
+	if (write2(out, data, DATA_PL_SIZE) != DATA_PL_SIZE) {
 		return -1;
 	}
 
@@ -205,7 +225,7 @@ write_payload_data(const struct data_payload *p, const struct io *out)
 }
 
 static int
-write_payload_fnode(const struct fnode_payload *p, const struct io *out)
+write_payload_fnode(const struct fnode_payload *p, int out)
 {
 	uint8_t data[FNODE_PL_SIZE];
 	uint8_t *b;
@@ -221,14 +241,14 @@ write_payload_fnode(const struct fnode_payload *p, const struct io *out)
 	b += NODE_ID_SIZE;
 
 	assert(b == data + FNODE_PL_SIZE);
-	if (io_write(out, data, FNODE_PL_SIZE) != FNODE_PL_SIZE) {
+	if (write2(out, data, FNODE_PL_SIZE) != FNODE_PL_SIZE) {
 		return -1;
 	}
 	return 0;
 }
 
 static int
-write_payload_fnode_resp(const struct fnode_resp_payload *p, const struct io *out)
+write_payload_fnode_resp(const struct fnode_resp_payload *p, int out)
 {
 	uint8_t data[FNODE_RESP_PL_SIZE];
 	uint8_t *b;
@@ -239,7 +259,7 @@ write_payload_fnode_resp(const struct fnode_resp_payload *p, const struct io *ou
 	b += sizeof(p->count);
 
 	assert(b == data + FNODE_RESP_PL_SIZE);
-	if (io_write(out, data, FNODE_RESP_PL_SIZE) != FNODE_RESP_PL_SIZE) {
+	if (write2(out, data, FNODE_RESP_PL_SIZE) != FNODE_RESP_PL_SIZE) {
 		return -1;
 	}
 
@@ -252,7 +272,7 @@ write_payload_fnode_resp(const struct fnode_resp_payload *p, const struct io *ou
 }
 
 static int
-write_node(const struct node *n, const struct io *out)
+write_node(const struct node *n, int out)
 {
 	uint8_t data[NODE_SIZE];
 	uint8_t *b;
@@ -271,14 +291,14 @@ write_node(const struct node *n, const struct io *out)
 	b += sizeof(n->port);
 
 	assert(b == data + NODE_SIZE);
-	if (io_write(out, data, NODE_SIZE) != NODE_SIZE) {
+	if (write2(out, data, NODE_SIZE) != NODE_SIZE) {
 		return -1;
 	}
 	return 0;
 }
 
 static int
-write_payload_fval(const struct fval_payload *p, const struct io *out)
+write_payload_fval(const struct fval_payload *p, int out)
 {
 	uint8_t data[FVAL_PL_SIZE];
 	uint8_t *b;
@@ -288,7 +308,7 @@ write_payload_fval(const struct fval_payload *p, const struct io *out)
 	b += KEY_SIZE;
 
 	assert(b == data + FVAL_PL_SIZE);
-	if (io_write(out, data, FVAL_PL_SIZE) == FVAL_PL_SIZE) {
+	if (write2(out, data, FVAL_PL_SIZE) != FVAL_PL_SIZE) {
 		return -1;
 	}
 	return 0;
@@ -299,7 +319,10 @@ message_decode(int in, const unsigned char publ[PUBL_SIZE],
 	const unsigned char priv[PRIV_SIZE])
 {
 	struct message *m;
-	struct io *dec;
+	int out;
+	pid_t child;
+	int status;
+
 	if ((m = malloc(sizeof(*m))) == NULL) {
 		return NULL;
 	}
@@ -307,23 +330,35 @@ message_decode(int in, const unsigned char publ[PUBL_SIZE],
 		free(m);
 		return NULL;
 	}
-	if ((dec = decrypt(in, publ, priv)) == NULL) {
+
+	if ((child = decrypt(in, &out, publ, priv)) == -1) {
 		free(m);
 		return NULL;
 	}
-	if (read_header(&m->hdr, dec) == -1) {
-		(void)io_close(dec);
+
+	if (read_header(&m->hdr, out) == -1) {
+		(void)close(out);
 		free(m);
 		return NULL;
 	}
-	if (read_payload(m->hdr.msg_type, &m->payload, dec) == -1) {
-		(void)io_close(dec);
+	if (read_payload(m->hdr.msg_type, &m->payload, out) == -1) {
+		(void)close(out);
 		free(m);
 		return NULL;
 	}
-	if (!decode_keep_open(m) && io_close(dec) == -1) {
-		free(m);
-		return NULL;
+	if (!decode_keep_open(m)) {
+		if (close(out) == -1) {
+			free(m);
+			return NULL;
+		}
+		while (waitpid(child, &status, 0) == -1) {
+			if (errno == EINTR) {
+				errno = 0;
+				continue;
+			}
+			free(m);
+			return NULL;
+		}
 	}
 	return m;
 }
@@ -334,7 +369,7 @@ message_close(struct message *m)
 	int ret = 0;
 	switch (m->hdr.msg_type) {
 	case TYPE_DATA:
-		ret = io_close(m->payload.data.value);
+		ret = close(m->payload.data.value);
 	case TYPE_FNODE_RESP:
 		free(m->payload.fnode_resp.nodes);
 		break;
@@ -364,14 +399,14 @@ read_prebody(struct message *m, int in)
 }
 
 static int
-read_header(struct header *hdr, const struct io *in)
+read_header(struct header *hdr, int in)
 {
 	uint8_t data[HDR_SIZE];
 	uint8_t *b = data;
 	uint64_t expiration;
 	time_t now;
 
-	if (io_read(in, data, HDR_SIZE) != HDR_SIZE) {
+	if (read2(in, data, HDR_SIZE) != HDR_SIZE) {
 		return -1;
 	}
 
@@ -430,7 +465,7 @@ read_header(struct header *hdr, const struct io *in)
 }
 
 static int
-read_payload(uint16_t type, union payload *p, struct io *in)
+read_payload(uint16_t type, union payload *p, int in)
 {
 	switch (type) {
 	case TYPE_PING:
@@ -449,13 +484,13 @@ read_payload(uint16_t type, union payload *p, struct io *in)
 }
 
 static int
-read_payload_data(struct data_payload *p, struct io *in)
+read_payload_data(struct data_payload *p, int in)
 {
 	uint8_t data[DATA_PL_SIZE];
 	uint8_t *b;
 	b = data;
 
-	if (io_read(in, data, DATA_PL_SIZE) != DATA_PL_SIZE) {
+	if (read2(in, data, DATA_PL_SIZE) != DATA_PL_SIZE) {
 		return -1;
 	}
 
@@ -476,13 +511,13 @@ read_payload_data(struct data_payload *p, struct io *in)
 }
 
 static int
-read_payload_fnode(struct fnode_payload *p, const struct io *in)
+read_payload_fnode(struct fnode_payload *p, int in)
 {
 	uint8_t data[FNODE_PL_SIZE];
 	uint8_t *b;
 	b = data;
 
-	if (io_read(in, data, FNODE_PL_SIZE) != FNODE_PL_SIZE) {
+	if (read2(in, data, FNODE_PL_SIZE) != FNODE_PL_SIZE) {
 		return -1;
 	}
 
@@ -500,14 +535,14 @@ read_payload_fnode(struct fnode_payload *p, const struct io *in)
 }
 
 static int
-read_payload_fnode_resp(struct fnode_resp_payload *p, const struct io *in)
+read_payload_fnode_resp(struct fnode_resp_payload *p, int in)
 {
 	uint8_t data[FNODE_RESP_PL_SIZE];
 	uint8_t *b;
 	size_t i;
 	b = data;
 
-	if (io_read(in, data, FNODE_RESP_PL_SIZE) != FNODE_RESP_PL_SIZE) {
+	if (read2(in, data, FNODE_RESP_PL_SIZE) != FNODE_RESP_PL_SIZE) {
 		return -1;
 	}
 
@@ -530,13 +565,13 @@ read_payload_fnode_resp(struct fnode_resp_payload *p, const struct io *in)
 }
 
 static int
-read_node(struct node *n, const struct io *in)
+read_node(struct node *n, int in)
 {
 	uint8_t data[NODE_SIZE];
 	uint8_t *b;
 	b = data;
 
-	if (io_read(in, data, NODE_SIZE) != NODE_SIZE) {
+	if (read2(in, data, NODE_SIZE) != NODE_SIZE) {
 		return -1;
 	}
 
@@ -557,13 +592,13 @@ read_node(struct node *n, const struct io *in)
 }
 
 static int
-read_payload_fval(struct fval_payload *p, const struct io *in)
+read_payload_fval(struct fval_payload *p, int in)
 {
 	uint8_t data[FVAL_PL_SIZE];
 	uint8_t *b;
 	b = data;
 
-	if (io_read(in, data, FVAL_PL_SIZE) == FVAL_PL_SIZE) {
+	if (read2(in, data, FVAL_PL_SIZE) != FVAL_PL_SIZE) {
 		return -1;
 	}
 

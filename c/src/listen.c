@@ -192,7 +192,6 @@ respond_fval(const struct dht *dht, int afd, const struct message *req)
 {
 	union payload p;
 	int value;
-	struct io value_io;
 	size_t value_length;
 
 	if ((value = storer_load(dht->storer, req->payload.fval.key, KEY_SIZE,
@@ -200,9 +199,8 @@ respond_fval(const struct dht *dht, int afd, const struct message *req)
 		return send_fnode_closest(dht, afd, req->payload.fval.key, K,
 			req->hdr.rpc_id, req->hdr.id);
 	}
-	wrap_fd(&value_io, value);
 	p.data.length = value_length;
-	p.data.value = &value_io;
+	p.data.value = value;
 	if (send_message(dht, afd, TYPE_DATA, req->hdr.rpc_id, &p, req->hdr.id) == -1) {
 		(void)close(value);
 	}

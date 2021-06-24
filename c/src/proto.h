@@ -28,7 +28,7 @@
 struct data_payload {
 	uint8_t key[KEY_SIZE];
 	uint64_t length;
-	struct io *value;
+	int value;
 };
 
 struct fnode_payload {

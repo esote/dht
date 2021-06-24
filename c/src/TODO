@@ -10,3 +10,6 @@ validate config
 need to ignore SIGPIPE?
 *ctx vs *arg naming
 which kbucket and rtable functions are needed
+support dns addresses
+use getaddrinfo for listening/connecting
+wait for child even on error in message_encode/decode
