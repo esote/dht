@@ -87,13 +87,24 @@ message_encode(const struct message *m, int out,
 	return 0;
 }
 
+static bool
+valid_version(uint16_t version)
+{
+	switch (version) {
+	case VERSION:
+		return true;
+	default:
+		return false;
+	}
+}
+
 static int
 write_prebody(const struct message *m, int out)
 {
 	uint8_t data[PRE_BODY_SIZE];
 	uint8_t *b = data;
 
-	if (m->version != VERSION) {
+	if (!valid_version(m->version)) {
 		return -1;
 	}
 	hton_16(b, m->version);
@@ -141,7 +152,7 @@ write_header(const struct header *hdr, int out,
 	hton_16(b, hdr->msg_type);
 	b += sizeof(hdr->msg_type);
 
-	if (!verify_key(hdr->id, hdr->dyn_x)) {
+	if (!valid_key(hdr->id, hdr->dyn_x)) {
 		return -1;
 	}
 	(void)memcpy(b, hdr->id, NODE_ID_SIZE);
@@ -427,7 +438,7 @@ read_header(struct header *hdr, int in)
 
 	(void)memcpy(hdr->dyn_x, b, DYN_X_SIZE);
 	b += DYN_X_SIZE;
-	if (!verify_key(hdr->id, hdr->dyn_x)) {
+	if (!valid_key(hdr->id, hdr->dyn_x)) {
 		return -1;
 	}
 

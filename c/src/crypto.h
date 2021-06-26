@@ -37,7 +37,7 @@ int sha2_final(struct sha2_state *state, uint8_t out[SHA2_512_SIZE]);
 
 int new_keypair(unsigned char publ[PUBL_SIZE], unsigned char priv[PRIV_SIZE],
 	unsigned char x[SHA3_512_SIZE]);
-bool verify_key(const unsigned char publ[PUBL_SIZE],
+bool valid_key(const unsigned char publ[PUBL_SIZE],
 	const unsigned char x[SHA3_512_SIZE]);
 
 /* Random */

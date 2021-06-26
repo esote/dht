@@ -19,8 +19,8 @@ static int new_keypair_static(unsigned char publ[PUBL_SIZE],
 static int new_keypair_dynamic(const unsigned char publ[PUBL_SIZE],
 	unsigned char x[SHA3_512_SIZE]);
 
-static bool verify_key_static(const unsigned char publ[PUBL_SIZE]);
-static bool verify_key_dynamic(const unsigned char publ[PUBL_SIZE],
+static bool valid_key_static(const unsigned char publ[PUBL_SIZE]);
+static bool valid_key_dynamic(const unsigned char publ[PUBL_SIZE],
 	const unsigned char x[SHA3_512_SIZE]);
 
 int
@@ -144,14 +144,14 @@ new_keypair_dynamic(const unsigned char publ[PUBL_SIZE],
 }
 
 bool
-verify_key(const unsigned char publ[PUBL_SIZE],
+valid_key(const unsigned char publ[PUBL_SIZE],
 	const unsigned char x[SHA3_512_SIZE])
 {
-	return verify_key_static(publ) && verify_key_dynamic(publ, x);
+	return valid_key_static(publ) && valid_key_dynamic(publ, x);
 }
 
 static bool
-verify_key_static(const unsigned char publ[PUBL_SIZE])
+valid_key_static(const unsigned char publ[PUBL_SIZE])
 {
 	crypto_hash_sha512_state state;
 	uint8_t h[SHA2_512_SIZE];
@@ -179,7 +179,7 @@ verify_key_static(const unsigned char publ[PUBL_SIZE])
 }
 
 static bool
-verify_key_dynamic(const unsigned char publ[PUBL_SIZE],
+valid_key_dynamic(const unsigned char publ[PUBL_SIZE],
 	const unsigned char x[SHA3_512_SIZE])
 {
 	struct sha3_state state;
