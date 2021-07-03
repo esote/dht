@@ -11,6 +11,7 @@
 #include "dht_internal.h"
 #include "listen.h"
 #include "proto.h"
+#include "util.h"
 
 static int dht_join_listeners(struct dht *dht, size_t i);
 
@@ -27,13 +28,16 @@ dht_new(const struct dht_config *config)
 
 	/* Copy config */
 	(void)memcpy(dht->network_id, config->network_id, NETWORK_ID_SIZE);
-	(void)memcpy(dht->ip.s6_addr, config->ip->s6_addr, sizeof(dht->ip.s6_addr));
+	if ((dht->addr = strdup(config->addr)) == NULL) {
+		return NULL;
+	}
 	dht->port = config->port;
 	dht->timeout = config->timeout;
 	dht->storer = config->storer;
 
 	/* Create node identity */
 	if (new_keypair(dht->id, dht->priv, dht->dyn_x) == -1) {
+		free(dht->addr);
 		free(dht);
 		return NULL;
 	}
@@ -41,23 +45,27 @@ dht_new(const struct dht_config *config)
 	/* Ignore SIGPIPE */
 	(void)memset(&act, 0, sizeof(act));
 	if (sigemptyset(&act.sa_mask) == -1) {
+		free(dht->addr);
 		free(dht);
 		return NULL;
 	}
 	act.sa_handler = SIG_IGN;
 	if (sigaction(SIGPIPE, &act, NULL) == -1) {
+		free(dht->addr);
 		free(dht);
 		return NULL;
 	}
 
 	/* Initialize routing table */
 	if ((dht->rtable = rtable_new(dht->id, K)) == NULL) {
+		free(dht->addr);
 		free(dht);
 		return NULL;
 	}
 
 	if (sem_init(&dht->listen_exit, 0, 0) == -1) {
 		(void)rtable_close(dht->rtable);
+		free(dht->addr);
 		free(dht);
 		return NULL;
 	}
@@ -67,6 +75,7 @@ dht_new(const struct dht_config *config)
 			(void)dht_join_listeners(dht, i);
 			(void)sem_destroy(&dht->listen_exit);
 			(void)rtable_close(dht->rtable);
+			free(dht->addr);
 			free(dht);
 			return NULL;
 		}
@@ -98,9 +107,9 @@ dht_join_listeners(struct dht *dht, size_t i)
 
 int
 dht_bootstrap(struct dht *dht, const uint8_t id[NODE_ID_SIZE],
-	const struct in6_addr *ip, uint16_t port)
+	const uint8_t dyn_x[DYN_X_SIZE], const char *addr, uint16_t port)
 {
-	uint8_t rpc_id[RPC_ID_SIZE];
+	uint8_t session_id[SESSION_ID_SIZE];
 	struct node target;
 	union payload p;
 	struct message *msg;
@@ -109,37 +118,45 @@ dht_bootstrap(struct dht *dht, const uint8_t id[NODE_ID_SIZE],
 
 	/* Target node */
 	(void)memcpy(target.id, id, NODE_ID_SIZE);
-	(void)memcpy(target.ip.s6_addr, ip->s6_addr, sizeof(ip->s6_addr));
+	(void)memcpy(target.dyn_x, dyn_x, DYN_X_SIZE);
+	if ((target.addr = strdup(addr)) == NULL) {
+		return -1;
+	}
 	target.port = port;
 
 	/* Find node request payload */
 	p.fnode.count = K;
 	(void)memcpy(p.fnode.target, dht->id, NODE_ID_SIZE);
 
-	if ((afd = connect_remote(ip, port)) == -1) {
+	if ((afd = connect_remote(addr, port)) == -1) {
+		free(target.addr);
 		return -1;
 	}
 
 	/* Send fnode request */
-	crypto_rand(rpc_id, RPC_ID_SIZE);
-	if (send_message(dht, afd, TYPE_FNODE, rpc_id, &p, id) == -1) {
+	crypto_rand(session_id, SESSION_ID_SIZE);
+	if (send_message(dht, afd, TYPE_FNODE, session_id, &p, id) == -1) {
 		(void)close(afd);
+		free(target.addr);
 		return -1;
 	}
 
 	/* Recv fnode_resp response */
 	if ((msg = message_decode(afd, dht->id, dht->priv)) == NULL) {
 		(void)close(afd);
+		free(target.addr);
 		return -1;
 	}
 	if (msg->hdr.msg_type != TYPE_FNODE_RESP) {
 		(void)message_close(msg);
 		(void)close(afd);
+		free(target.addr);
 		return -1;
 	}
-	if (memcmp(msg->hdr.rpc_id, rpc_id, RPC_ID_SIZE) != 0) {
+	if (memcmp(msg->hdr.session_id, session_id, SESSION_ID_SIZE) != 0) {
 		(void)message_close(msg);
 		(void)close(afd);
+		free(target.addr);
 		return -1;
 	}
 
@@ -147,6 +164,7 @@ dht_bootstrap(struct dht *dht, const uint8_t id[NODE_ID_SIZE],
 	if (dht_update(dht, &target) == -1) {
 		(void)message_close(msg);
 		(void)close(afd);
+		free(target.addr);
 		return -1;
 	}
 
@@ -155,15 +173,22 @@ dht_bootstrap(struct dht *dht, const uint8_t id[NODE_ID_SIZE],
 		if (dht_update(dht, &msg->payload.fnode_resp.nodes[i]) == -1) {
 			(void)message_close(msg);
 			(void)close(afd);
+			free(target.addr);
 			return -1;
 		}
 	}
 
 	if (message_close(msg) == -1) {
 		(void)close(afd);
+		free(target.addr);
 		return -1;
 	}
-	return close(afd);
+	if (close(afd) == -1) {
+		free(target.addr);
+		return -1;
+	}
+	free(target.addr);
+	return 0;
 }
 
 int
@@ -179,6 +204,7 @@ dht_close(struct dht *dht)
 	if (rtable_close(dht->rtable) == -1) {
 		ret = -1;
 	}
+	free(dht->addr);
 	free(dht);
 	return ret;
 }

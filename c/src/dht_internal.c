@@ -1,7 +1,11 @@
+#include <assert.h>
+#include <inttypes.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <stdint.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -15,7 +19,7 @@ static bool ping_node(const struct node *n, void *arg);
 
 int
 send_message(const struct dht *dht, int afd, uint16_t msg_type,
-	const uint8_t rpc_id[RPC_ID_SIZE], const union payload *p,
+	const uint8_t session_id[SESSION_ID_SIZE], const union payload *p,
 	const uint8_t target_id[NODE_ID_SIZE])
 {
 	struct message m;
@@ -23,43 +27,80 @@ send_message(const struct dht *dht, int afd, uint16_t msg_type,
 
 	m.version = VERSION;
 
-	(void)memcpy(m.hdr.network_id, dht->network_id, NETWORK_ID_SIZE);
-	m.hdr.msg_type = msg_type;
-	(void)memcpy(m.hdr.id, dht->id, NODE_ID_SIZE);
-	(void)memcpy(m.hdr.dyn_x, dht->dyn_x, DYN_X_SIZE);
-	(void)memcpy(m.hdr.ip.s6_addr, dht->ip.s6_addr, sizeof(dht->ip.s6_addr));
-	m.hdr.port = dht->port;
-	(void)memcpy(m.hdr.rpc_id, rpc_id, RPC_ID_SIZE);
+	(void)memcpy(m.hdr.session_id, session_id, SESSION_ID_SIZE);
 	if ((now = time(NULL)) == -1) {
 		return -1;
 	}
 	m.hdr.expiration = now + dht->timeout; /* TODO: might overflow */
+	(void)memcpy(m.hdr.network_id, dht->network_id, NETWORK_ID_SIZE);
+	m.hdr.msg_type = msg_type;
+
+	(void)memcpy(m.hdr.node.id, dht->id, NODE_ID_SIZE);
+	(void)memcpy(m.hdr.node.dyn_x, dht->dyn_x, DYN_X_SIZE);
+	if ((m.hdr.node.addr = strdup(dht->addr)) == NULL) {
+		/* TODO: if strlen(dht->addr) == 0 null might be right */
+		return -1;
+	}
+	m.hdr.node.port = dht->port;
 
 	if (p == NULL) {
 		(void)memset(&m.payload, 0, sizeof(m.payload));
 	} else {
 		m.payload = *p;
 	}
-	return message_encode(&m, afd, dht->priv, target_id);
+	if (message_encode(&m, afd, dht->priv, target_id) == -1) {
+		free(m.hdr.node.addr);
+		return -1;
+	}
+	free(m.hdr.node.addr);
+	return 0;
 }
 
 int
-connect_remote(const struct in6_addr *ip, uint16_t port)
+connect_remote(const char *addr, uint16_t port)
 {
 	int fd;
-	struct sockaddr_in6 addr = {0};
+	struct addrinfo hints;
+	struct addrinfo *result, *rp;
+	char str_port[6];
+	int n;
 
-	if ((fd = socket(AF_INET6, SOCK_STREAM, 0)) == -1) {
+	(void)memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_flags = 0;
+	hints.ai_protocol = 0;
+
+	/* TODO: cleaner way? */
+	n = snprintf(str_port, sizeof(str_port), "%" PRIu16, port);
+	assert(n >= 0 && n < sizeof(str_port));
+
+	if (getaddrinfo(addr, str_port, &hints, &result)) {
+		/*  TODO: print return value, retry? */
 		return -1;
 	}
-	addr.sin6_family = AF_INET6;
-	addr.sin6_port = htons(port);
-	(void)memcpy(addr.sin6_addr.s6_addr, ip->s6_addr, sizeof(ip->s6_addr));
-	/* TODO: set socket reuse addr, timeouts, etc. ? */
-	if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
-		(void)close(fd);
+
+	for (rp = result; rp != NULL; rp = rp->ai_next) {
+		fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+		if (fd == -1) {
+			continue;
+		}
+		if (connect(fd, rp->ai_addr, rp->ai_addrlen) != -1) {
+			break;
+		}
+		if (close(fd) == -1) {
+			freeaddrinfo(result);
+			return -1;
+		}
+	}
+
+	freeaddrinfo(result);
+
+	if (rp == NULL) {
+		/* no address succeeded */
 		return -1;
 	}
+
 	return fd;
 }
 
@@ -106,16 +147,16 @@ static bool
 ping_node(const struct node *n, void *arg)
 {
 	struct dht *dht = arg;
-	uint8_t rpc_id[RPC_ID_SIZE];
+	uint8_t session_id[SESSION_ID_SIZE];
 	int afd;
 	struct message *msg;
 	bool alive;
 
-	if ((afd = connect_remote(&n->ip, n->port)) == -1) {
+	if ((afd = connect_remote(n->addr, n->port)) == -1) {
 		return false;
 	}
-	crypto_rand(rpc_id, RPC_ID_SIZE);
-	if (send_message(dht, afd, TYPE_PING, rpc_id, NULL, n->id) == -1) {
+	crypto_rand(session_id, SESSION_ID_SIZE);
+	if (send_message(dht, afd, TYPE_PING, session_id, NULL, n->id) == -1) {
 		(void)close(afd);
 		return false;
 	}
@@ -125,7 +166,7 @@ ping_node(const struct node *n, void *arg)
 	}
 
 	alive = msg->hdr.msg_type == TYPE_PING
-		&& memcmp(msg->hdr.rpc_id, rpc_id, RPC_ID_SIZE) == 0;
+		&& memcmp(msg->hdr.session_id, session_id, SESSION_ID_SIZE) == 0;
 
 	if (message_close(msg) == -1) {
 		(void)close(afd);

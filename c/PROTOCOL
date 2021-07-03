@@ -13,16 +13,21 @@ Body ciphertext format
 	HEADER [216 bytes]
 	PAYLOAD [variable bytes]
 
-Header format
-	NETWORK_ID [8 bytes]
-	MSG_TYPE [2 bytes]
+Node format
 	ID [32 bytes]
 	DYN_X [64 bytes]
-	IP [16 bytes]
+	ADDRLEN [2 bytes]
+	ADDR [ADDRLEN bytes]
 	PORT [2 bytes]
-	RPC_ID [20 bytes]
+
+Header format
+	SESSION_ID [20 bytes]
 	EXPIRATION [8 bytes]
 	SIG [64 bytes]
+	NETWORK_ID [8 bytes]
+	MSG_TYPE [2 bytes]
+	NODE [variable bytes]
+		Node format
 
 Ping payload format [0 bytes]
 
@@ -34,13 +39,13 @@ Data payload format
 Find node payload format
 	COUNT [1 byte]
 	TARGET [32 bytes]
+	/* TODO: include dyn_x? */
 
 Find node resp payload format
 	COUNT [1 byte]
 	NODES [COUNT times]
-		ID [32 bytes]
-		IP [16 bytes]
-		PORT [2 bytes]
+		NODE [variable bytes]
+			Node format
 
 Find value payload format
 	KEY [64 bytes]

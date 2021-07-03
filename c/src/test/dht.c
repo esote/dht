@@ -40,10 +40,7 @@ main(int argc, char *argv[])
 		.timeout = 3600000
 	};
 
-	struct in6_addr ip;
-	(void)memcpy(ip.s6_addr, in6addr_loopback.s6_addr, sizeof(ip.s6_addr));
-	config.ip = &ip;
-
+	config.addr = "localhost";
 	config.port = (uint16_t)strtol(argv[2], NULL, 10);
 
 	if ((config.storer = storer_new(argv[1], 1600, 1600)) == NULL) {
@@ -62,7 +59,7 @@ main(int argc, char *argv[])
 
 	uint8_t id[NODE_ID_SIZE];
 	from_hex(id, argv[4], NODE_ID_SIZE);
-	int ret = dht_bootstrap(dht, id, &dht->ip, port);
+	int ret = dht_bootstrap(dht, id, dht->dyn_x, dht->addr, port);
 	assert(ret != -1);
 	assert(dht_close(dht) != -1);
 	assert(storer_free(config.storer) != -1);

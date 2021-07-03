@@ -9,10 +9,10 @@
 #include "io.h"
 
 #define VERSION 0
+#define SESSION_ID_SIZE 20
 #define NETWORK_ID_SIZE 8
 #define NODE_ID_SIZE PUBL_SIZE
 #define DYN_X_SIZE SHA3_512_SIZE
-#define RPC_ID_SIZE 20
 
 #define KEY_SIZE SHA2_512_SIZE
 #if KEY_SIZE < NODE_ID_SIZE
@@ -38,7 +38,8 @@ struct fnode_payload {
 
 struct node {
 	uint8_t id[NODE_ID_SIZE];
-	struct in6_addr ip;
+	uint8_t dyn_x[DYN_X_SIZE];
+	char *addr;
 	uint16_t port;
 };
 
@@ -59,20 +60,19 @@ union payload {
 };
 
 struct header {
+	uint8_t session_id[SESSION_ID_SIZE];
+	time_t expiration;
 	uint8_t network_id[NETWORK_ID_SIZE];
 	uint16_t msg_type;
-	uint8_t id[NODE_ID_SIZE];
-	uint8_t dyn_x[DYN_X_SIZE];
-	struct in6_addr ip;
-	uint16_t port;
-	uint8_t rpc_id[RPC_ID_SIZE];
-	time_t expiration;
+	struct node node;
 };
 
 struct message {
 	uint16_t version;
 	struct header hdr;
 	union payload payload;
+
+	int _child;
 };
 
 int message_encode(const struct message *m, int out,

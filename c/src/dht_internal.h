@@ -17,11 +17,11 @@
 struct dht {
 	uint8_t network_id[NETWORK_ID_SIZE];
 
-	struct in6_addr ip;
+	char *addr;
+	uint8_t dyn_x[DYN_X_SIZE];
 	uint16_t port;
 
 	uint8_t id[NODE_ID_SIZE];
-	uint8_t dyn_x[DYN_X_SIZE];
 	unsigned char priv[PRIV_SIZE];
 
 	time_t timeout;
@@ -34,10 +34,10 @@ struct dht {
 };
 
 int send_message(const struct dht *dht, int afd, uint16_t msg_type,
-	const uint8_t rpc_id[RPC_ID_SIZE], const union payload *p,
+	const uint8_t session_id[SESSION_ID_SIZE], const union payload *p,
 	const uint8_t target_id[NODE_ID_SIZE]);
 
-int connect_remote(const struct in6_addr *ip, uint16_t port);
+int connect_remote(const char *addr, uint16_t port);
 int listen_local(uint16_t port);
 
 int dht_update(struct dht *dht, struct node *target);
