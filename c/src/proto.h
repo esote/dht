@@ -10,7 +10,7 @@
 
 #define VERSION 0
 #define SESSION_ID_SIZE 20
-#define NETWORK_ID_SIZE 8
+#define NETWORK_ID_SIZE 32
 #define NODE_ID_SIZE PUBL_SIZE
 #define DYN_X_SIZE SHA3_512_SIZE
 

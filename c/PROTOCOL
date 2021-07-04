@@ -24,7 +24,7 @@ Header format
 	SESSION_ID [20 bytes]
 	EXPIRATION [8 bytes] uint64_t
 	SIG [64 bytes]
-	NETWORK_ID [8 bytes]
+	NETWORK_ID [32 bytes]
 	MSG_TYPE [2 bytes] uint16_t
 	NODE [variable bytes]
 		Node format

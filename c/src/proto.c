@@ -14,6 +14,8 @@
 #include "io.h"
 #include "proto.h"
 
+#define SIG_BODY_SIZE ((SESSION_ID_SIZE) + sizeof(uint64_t))
+
 static bool supported_version(uint16_t version);
 static bool supported_msg_type(uint16_t msg_type);
 static bool message_keep_open(const struct message *m);
@@ -250,6 +252,11 @@ write_node(const struct node *n, int out)
 	uint8_t addrlen[sizeof(uint16_t)];
 	uint8_t port[sizeof(n->port)];
 
+	/* validate ID and DYN X */
+	if (!valid_key(n->id, n->dyn_x)) {
+		return -1;
+	}
+
 	/* ID */
 	if (write2(out, n->id, NODE_ID_SIZE) != NODE_ID_SIZE) {
 		return -1;
@@ -260,8 +267,8 @@ write_node(const struct node *n, int out)
 		return -1;
 	}
 
-	/* ADDRLEN */
-	str_addrlen = strlen(n->addr); /* TODO: at most sizeof(uint16_t)+1 bytes */
+	/* ADDRLEN (address can be most UINT16_MAX bytes) */
+	str_addrlen = strnlen(n->addr, UINT16_MAX + 1);
 	if (str_addrlen > UINT16_MAX) {
 		return -1;
 	}
@@ -283,8 +290,6 @@ write_node(const struct node *n, int out)
 
 	return 0;
 }
-
-#define SIG_BODY_SIZE ((SESSION_ID_SIZE) + sizeof(uint64_t))
 
 static int
 write_header(const struct header *hdr, int out,
@@ -373,6 +378,9 @@ write_payload_data(const struct data_payload *p, int out)
 	}
 
 	/* LENGTH */
+	if (p->length == 0) {
+		return -1;
+	}
 	hton_64(length, p->length);
 	if (write2(out, length, sizeof(length)) != sizeof(length)) {
 		return -1;
@@ -390,7 +398,15 @@ static int
 write_payload_fnode(const struct fnode_payload *p, int out)
 {
 	/* COUNT */
+	if (p->count == 0) {
+		return -1;
+	}
 	if (write2(out, &p->count, sizeof(p->count)) != sizeof(p->count)) {
+		return -1;
+	}
+
+	/* validate target ID and DYN X */
+	if (!valid_key(p->target_id, p->target_dyn_x)) {
 		return -1;
 	}
 
@@ -472,6 +488,11 @@ read_node(struct node *n, int in)
 		return -1;
 	}
 
+	/* validate ID and DYN X */
+	if (!valid_key(n->id, n->dyn_x)) {
+		return -1;
+	}
+
 	/* ADDRLEN */
 	if (read2(in, addrlen, sizeof(addrlen)) != sizeof(addrlen)) {
 		return -1;
@@ -542,11 +563,15 @@ read_header(struct header *hdr, int in)
 		return -1;
 	}
 	hdr->msg_type = ntoh_16(msg_type);
+	if (!supported_msg_type(hdr->msg_type)) {
+		return -1;
+	}
 
 	if (read_node(&hdr->node, in) == -1) {
 		return -1;
 	}
 
+	/* verify SIG_BODY was signed by sender's ID */
 	if (!sign_verify(sig, sig_body, SIG_BODY_SIZE, hdr->node.id)) {
 		free_node(&hdr->node);
 		return -1;
@@ -593,8 +618,8 @@ read_payload_data(struct data_payload *p, int in)
 		return -1;
 	}
 
-	/* VALUE */
-	p->value = in; /* in is kept open, referenced as value */
+	/* VALUE (input fd is kept open, referenced as data value */
+	p->value = in;
 	return 0;
 }
 
@@ -605,6 +630,9 @@ read_payload_fnode(struct fnode_payload *p, int in)
 	if (read2(in, &p->count, sizeof(p->count)) != sizeof(p->count)) {
 		return -1;
 	}
+	if (p->count == 0) {
+		return -1;
+	}
 
 	/* TARGET ID */
 	if (read2(in, p->target_id, NODE_ID_SIZE) != NODE_ID_SIZE) {
@@ -613,6 +641,11 @@ read_payload_fnode(struct fnode_payload *p, int in)
 
 	/* TARGET DYN X */
 	if (read2(in, p->target_dyn_x, DYN_X_SIZE) != DYN_X_SIZE) {
+		return -1;
+	}
+
+	/* validate target ID and DYN X */
+	if (!valid_key(p->target_id, p->target_dyn_x)) {
 		return -1;
 	}
 
@@ -630,6 +663,11 @@ read_payload_fnode_resp(struct fnode_resp_payload *p, int in)
 	}
 
 	/* NODES */
+	if (p->count == 0) {
+		/* return early, no nodes to read */
+		p->nodes = NULL;
+		return 0;
+	}
 	if ((p->nodes = malloc(sizeof(p->nodes[0]) * p->count)) == NULL) {
 		return -1;
 	}
