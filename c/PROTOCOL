@@ -1,5 +1,5 @@
 Message format
-	VERSION [2 byte]
+	VERSION [2 byte] uint16_t
 	BODY [variable bytes]
 
 Body format
@@ -16,16 +16,16 @@ Body ciphertext format
 Node format
 	ID [32 bytes]
 	DYN_X [64 bytes]
-	ADDRLEN [2 bytes]
+	ADDRLEN [2 bytes] uint16_t
 	ADDR [ADDRLEN bytes]
-	PORT [2 bytes]
+	PORT [2 bytes] uint16_t
 
 Header format
 	SESSION_ID [20 bytes]
-	EXPIRATION [8 bytes]
+	EXPIRATION [8 bytes] uint64_t
 	SIG [64 bytes]
 	NETWORK_ID [8 bytes]
-	MSG_TYPE [2 bytes]
+	MSG_TYPE [2 bytes] uint16_t
 	NODE [variable bytes]
 		Node format
 
@@ -33,16 +33,16 @@ Ping payload format [0 bytes]
 
 Data payload format
 	KEY [64 bytes]
-	LENGTH [8 bytes]
+	LENGTH [8 bytes] uint64_t >0
 	VALUE [LENGTH bytes]
 
 Find node payload format
-	COUNT [1 byte]
+	COUNT [1 byte] uint8_t >0
 	TARGET_ID [32 bytes]
 	TARGET_DYN_X [64 bytes]
 
 Find node resp payload format
-	COUNT [1 byte]
+	COUNT [1 byte] uint8_t
 	NODES [COUNT times]
 		NODE [variable bytes]
 			Node format
