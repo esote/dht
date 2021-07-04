@@ -14,8 +14,8 @@
 #include "io.h"
 #include "proto.h"
 
-static bool valid_version(uint16_t version);
-static bool valid_msg_type(uint16_t msg_type);
+static bool supported_version(uint16_t version);
+static bool supported_msg_type(uint16_t msg_type);
 static bool message_keep_open(const struct message *m);
 static void free_node(struct node *n);
 static int payload_close(uint16_t msg_type, union payload *p);
@@ -173,18 +173,13 @@ message_close(struct message *m)
 }
 
 static bool
-valid_version(uint16_t version)
+supported_version(uint16_t version)
 {
-	switch (version) {
-	case VERSION:
-		return true;
-	default:
-		return false;
-	}
+	return version == VERSION;
 }
 
 static bool
-valid_msg_type(uint16_t msg_type)
+supported_msg_type(uint16_t msg_type)
 {
 	switch (msg_type) {
 	case TYPE_PING:
@@ -237,7 +232,7 @@ write_prebody(const struct message *m, int out)
 	uint8_t version[sizeof(m->version)];
 
 	/* VERSION */
-	if (!valid_version(m->version)) {
+	if (!supported_version(m->version)) {
 		return -1;
 	}
 	hton_16(version, m->version);
@@ -333,7 +328,7 @@ write_header(const struct header *hdr, int out,
 	}
 
 	/* MSG TYPE */
-	if (!valid_msg_type(hdr->msg_type)) {
+	if (!supported_msg_type(hdr->msg_type)) {
 		return -1;
 	}
 	hton_16(msg_type, hdr->msg_type);
@@ -448,7 +443,7 @@ read_prebody(struct message *m, int in)
 		return -1;
 	}
 	m->version = ntoh_16(version);
-	if (!valid_version(m->version)) {
+	if (!supported_version(m->version)) {
 		return -1;
 	}
 
