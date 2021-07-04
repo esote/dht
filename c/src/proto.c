@@ -16,8 +16,9 @@
 
 static bool valid_version(uint16_t version);
 static bool valid_msg_type(uint16_t msg_type);
-static bool decode_keep_open(const struct message *m);
+static bool message_keep_open(const struct message *m);
 static void free_node(struct node *n);
+static int payload_close(uint16_t msg_type, union payload *p);
 
 static int write_prebody(const struct message *m, int out);
 static int write_node(const struct node *n, int out);
@@ -129,11 +130,12 @@ message_decode(int in, const unsigned char publ[PUBL_SIZE],
 		return NULL;
 	}
 
-	if (decode_keep_open(m)) {
+	if (message_keep_open(m)) {
+		/* return early, keep the message fd open and child running */
 		return m;
 	}
 
-	/* close output fd and stop child */
+	/* close output fd, wait for child to stop, check output status */
 	if (close(out) == -1) {
 		(void)message_close(m);
 		return NULL;
@@ -146,9 +148,9 @@ message_decode(int in, const unsigned char publ[PUBL_SIZE],
 		(void)message_close(m);
 		return NULL;
 	}
+	m->_child = -1;
 	if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
 		/* child exited normally */
-		m->_child = -1;
 		return m;
 	}
 
@@ -160,21 +162,8 @@ message_decode(int in, const unsigned char publ[PUBL_SIZE],
 int
 message_close(struct message *m)
 {
-	size_t i;
-	int ret = 0;
-	switch (m->hdr.msg_type) {
-	case TYPE_DATA:
-		if (close(m->payload.data.value) == -1) {
-			ret = -1;
-		}
-		break;
-	case TYPE_FNODE_RESP:
-		for (i = 0; i < m->payload.fnode_resp.count; i++) {
-			free_node(&m->payload.fnode_resp.nodes[i]);
-		}
-		free(m->payload.fnode_resp.nodes);
-		break;
-	}
+	int ret;
+	ret = payload_close(m->hdr.msg_type, &m->payload);
 	if (m->_child != -1 && kill(m->_child, SIGKILL) == -1) {
 		ret = -1;
 	}
@@ -210,7 +199,7 @@ valid_msg_type(uint16_t msg_type)
 }
 
 static bool
-decode_keep_open(const struct message *m)
+message_keep_open(const struct message *m)
 {
 	return m->hdr.msg_type == TYPE_DATA;
 }
@@ -219,6 +208,27 @@ static void
 free_node(struct node *n)
 {
 	free(n->addr);
+}
+
+static int
+payload_close(uint16_t msg_type, union payload *p)
+{
+	size_t i;
+	switch (msg_type) {
+	case TYPE_DATA:
+		if (close(p->data.value) == -1) {
+			return -1;
+		}
+		return 0;
+	case TYPE_FNODE_RESP:
+		for (i = 0; i < p->fnode_resp.count; i++) {
+			free_node(&p->fnode_resp.nodes[i]);
+		}
+		free(p->fnode_resp.nodes);
+		return 0;
+	default:
+		return 0;
+	}
 }
 
 static int
