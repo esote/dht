@@ -126,7 +126,8 @@ dht_bootstrap(struct dht *dht, const uint8_t id[NODE_ID_SIZE],
 
 	/* Find node request payload */
 	p.fnode.count = K;
-	(void)memcpy(p.fnode.target, dht->id, NODE_ID_SIZE);
+	(void)memcpy(p.fnode.target_id, dht->id, NODE_ID_SIZE);
+	(void)memcpy(p.fnode.target_dyn_x, dht->dyn_x, DYN_X_SIZE);
 
 	if ((afd = connect_remote(addr, port)) == -1) {
 		free(target.addr);

@@ -159,7 +159,7 @@ respond_data(struct dht *dht, int afd, const struct message *msg)
 static int
 respond_fnode(const struct dht *dht, int afd, const struct message *msg)
 {
-	return send_fnode_closest(dht, afd, msg->payload.fnode.target,
+	return send_fnode_closest(dht, afd, msg->payload.fnode.target_id,
 		msg->payload.fnode.count, msg->hdr.session_id, msg->hdr.node.id);
 }
 
