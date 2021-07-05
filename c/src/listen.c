@@ -1,11 +1,14 @@
 #include <assert.h>
 #include <errno.h>
+#include <inttypes.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <semaphore.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -17,7 +20,11 @@
 #include "rtable.h"
 #include "storer.h"
 
+#define LISTEN_BACKLOG 64
+
 static int listener_accept(struct dht *dht, int sfd);
+static int listen_net(uint16_t port);
+static int socket_reuse(int fd);
 static int listener_work(struct dht *dht, int afd);
 static bool listener_should_exit(struct dht *dht);
 static int respond_msg(struct dht *dht, int afd, const struct message *msg);
@@ -38,7 +45,7 @@ listener_start(void *arg)
 	int sfd;
 
 	dht = arg;
-	if ((sfd = listen_local(dht->port)) == -1) {
+	if ((sfd = listen_net(dht->port)) == -1) {
 		return NULL;
 	}
 	if (listener_accept(dht, sfd) == -1) {
@@ -49,6 +56,69 @@ listener_start(void *arg)
 		return NULL;
 	}
 	return &listen_success;
+}
+
+static int
+listen_net(uint16_t port)
+{
+	int fd;
+	struct addrinfo hints;
+	struct addrinfo *result, *rp;
+	char str_port[6];
+	int n;
+
+	(void)memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_flags = 0;
+	hints.ai_protocol = 0;
+
+	n = snprintf(str_port, sizeof(str_port), "%" PRIu16, port);
+	assert(n >= 0 && n < sizeof(str_port));
+
+	if (getaddrinfo(NULL, str_port, &hints, &result) != 0) {
+		/* TODO: print return value, retry? */
+		return -1;
+	}
+
+	for (rp = result; rp != NULL; rp = rp->ai_next) {
+		fd = socket(rp->ai_family, rp->ai_socktype | SOCK_NONBLOCK, rp->ai_protocol);
+		if (fd == -1) {
+			continue;
+		}
+		if (socket_reuse(fd) == -1) {
+			(void)close(fd);
+			continue;
+		}
+		if (bind(fd, rp->ai_addr, rp->ai_addrlen) == -1) {
+			(void)close(fd);
+			continue;
+		}
+		if (listen(fd, LISTEN_BACKLOG) == -1) {
+			(void)close(fd);
+			continue;
+		}
+		break;
+	}
+
+	freeaddrinfo(result);
+
+	if (rp == NULL) {
+		/* no address succeeded */
+		return -1;
+	}
+
+	return fd;
+}
+
+static int
+socket_reuse(int fd)
+{
+	int opt = 1;
+	if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt)) == -1) {
+		return 1;
+	}
+	return setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 }
 
 static int

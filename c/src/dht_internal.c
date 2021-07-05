@@ -12,9 +12,6 @@
 #include "dht_internal.h"
 #include "proto.h"
 
-#define LISTEN_BACKLOG 64
-
-static int socket_reuse(int fd);
 static bool ping_node(const struct node *n, void *arg);
 
 int
@@ -75,7 +72,7 @@ connect_remote(const char *addr, uint16_t port)
 	n = snprintf(str_port, sizeof(str_port), "%" PRIu16, port);
 	assert(n >= 0 && n < sizeof(str_port));
 
-	if (getaddrinfo(addr, str_port, &hints, &result)) {
+	if (getaddrinfo(addr, str_port, &hints, &result) != 0) {
 		/*  TODO: print return value, retry? */
 		return -1;
 	}
@@ -85,13 +82,11 @@ connect_remote(const char *addr, uint16_t port)
 		if (fd == -1) {
 			continue;
 		}
-		if (connect(fd, rp->ai_addr, rp->ai_addrlen) != -1) {
-			break;
+		if (connect(fd, rp->ai_addr, rp->ai_addrlen) == -1) {
+			(void)close(fd);
+			continue;
 		}
-		if (close(fd) == -1) {
-			freeaddrinfo(result);
-			return -1;
-		}
+		break;
 	}
 
 	freeaddrinfo(result);
@@ -101,33 +96,6 @@ connect_remote(const char *addr, uint16_t port)
 		return -1;
 	}
 
-	return fd;
-}
-
-int
-listen_local(uint16_t port)
-{
-	int fd;
-	struct sockaddr_in6 addr = {0};
-
-	if ((fd = socket(AF_INET6, SOCK_STREAM | SOCK_NONBLOCK, 0)) == -1) {
-		return -1;
-	}
-	if (socket_reuse(fd) == -1) {
-		(void)close(fd);
-		return -1;
-	}
-	addr.sin6_family = AF_INET6;
-	addr.sin6_port = htons(port);
-	addr.sin6_addr = in6addr_any;
-	if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
-		(void)close(fd);
-		return -1;
-	}
-	if (listen(fd, LISTEN_BACKLOG) == -1) {
-		(void)close(fd);
-		return -1;
-	}
 	return fd;
 }
 
@@ -176,14 +144,4 @@ ping_node(const struct node *n, void *arg)
 		return false;
 	}
 	return alive;
-}
-
-static int
-socket_reuse(int fd)
-{
-	int opt = 1;
-	if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt)) == -1) {
-		return 1;
-	}
-	return setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 }
