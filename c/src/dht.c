@@ -29,6 +29,7 @@ dht_new(const struct dht_config *config)
 	/* Copy config */
 	(void)memcpy(dht->network_id, config->network_id, NETWORK_ID_SIZE);
 	if ((dht->addr = strdup(config->addr)) == NULL) {
+		free(dht);
 		return NULL;
 	}
 	dht->port = config->port;
