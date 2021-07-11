@@ -50,7 +50,7 @@
 1.5 Data payload format
 
 	KEY [64 bytes]
-	LENGTH [8 bytes] uint64_t
+	LENGTH [8 bytes] uint64_t >0
 	VALUE [LENGTH bytes]
 
 1.6 Find node payload format
