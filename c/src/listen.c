@@ -180,10 +180,10 @@ listener_work(struct dht *dht, int afd)
 		(void)message_close(msg);
 		return -1;
 	}
-	(void)memcpy(target.id, msg->hdr.node.id, NODE_ID_SIZE);
-	(void)memcpy(target.dyn_x, msg->hdr.node.dyn_x, DYN_X_SIZE);
-	target.addr = msg->hdr.node.addr;
-	target.port = msg->hdr.node.port;
+	(void)memcpy(target.id, msg->hdr.self.id, NODE_ID_SIZE);
+	(void)memcpy(target.dyn_x, msg->hdr.self.dyn_x, DYN_X_SIZE);
+	target.addr = msg->hdr.self.addr;
+	target.port = msg->hdr.self.port;
 	if (dht_update(dht, &target) == -1) {
 		(void)message_close(msg);
 		return -1;
@@ -212,7 +212,7 @@ static int
 respond_ping(const struct dht *dht, int afd, const struct message *msg)
 {
 	return send_message(dht, afd, TYPE_PING, msg->hdr.session_id, NULL,
-		msg->hdr.node.id);
+		msg->hdr.self.id);
 }
 
 static int
@@ -223,14 +223,14 @@ respond_data(struct dht *dht, int afd, const struct message *msg)
 		return -1;
 	}
 	return send_message(dht, afd, TYPE_PING, msg->hdr.session_id, NULL,
-		msg->hdr.node.id);
+		msg->hdr.self.id);
 }
 
 static int
 respond_fnode(const struct dht *dht, int afd, const struct message *msg)
 {
 	return send_fnode_closest(dht, afd, msg->payload.fnode.target_id,
-		msg->payload.fnode.count, msg->hdr.session_id, msg->hdr.node.id);
+		msg->payload.fnode.count, msg->hdr.session_id, msg->hdr.self.id);
 }
 
 static int
@@ -268,11 +268,11 @@ respond_fval(const struct dht *dht, int afd, const struct message *req)
 	if ((value = storer_load(dht->storer, req->payload.fval.key, KEY_SIZE,
 		&value_length)) == -1) {
 		return send_fnode_closest(dht, afd, req->payload.fval.key, K,
-			req->hdr.session_id, req->hdr.node.id);
+			req->hdr.session_id, req->hdr.self.id);
 	}
 	p.data.length = value_length;
 	p.data.value = value;
-	if (send_message(dht, afd, TYPE_DATA, req->hdr.session_id, &p, req->hdr.node.id) == -1) {
+	if (send_message(dht, afd, TYPE_DATA, req->hdr.session_id, &p, req->hdr.self.id) == -1) {
 		(void)close(value);
 	}
 	return close(value);

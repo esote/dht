@@ -5,9 +5,11 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "bytes.h"
 #include "crypto.h"
 #include "crypto_stream.h"
 #include "io.h"
+#include "util.h"
 
 #define XPUBL_SIZE	crypto_scalarmult_curve25519_BYTES
 #define XPRIV_SIZE	crypto_scalarmult_curve25519_BYTES
@@ -29,17 +31,22 @@
 #error hash key size mismatch
 #endif
 
-#define BLOCK_SIZE	262144
+#define BLOCK_SIZE	UINT16_MAX
 #define BLOCK_SIZE_MAX	((SSIZE_MAX) - (CIPHER_OVERHEAD))
 #if BLOCK_SIZE > BLOCK_SIZE_MAX
 #error block size invalid
 #endif
 
-static int encrypt_child(int in, int out, const unsigned char publ[PUBL_SIZE]);
-static int encrypt_ed25519(int in, int out, const unsigned char publ[PUBL_SIZE]);
-static int encrypt_x25519(int in, int out, const unsigned char xpubl[XPUBL_SIZE]);
-static int encrypt_loop(int in, int out, unsigned char nonce[NONCE_SIZE],
-	const unsigned char key[KEY_SIZE]);
+static const uint16_t cipher_version = 0;
+
+static int encrypt_child(int in, size_t inlen, int out,
+	const unsigned char publ[PUBL_SIZE]);
+static int encrypt_ed25519(int in, size_t inlen, int out,
+	const unsigned char publ[PUBL_SIZE]);
+static int encrypt_x25519(int in, size_t inlen, int out,
+	const unsigned char xpubl[XPUBL_SIZE]);
+static int encrypt_loop(int in, size_t inlen, int out,
+	unsigned char nonce[NONCE_SIZE], const unsigned char key[KEY_SIZE]);
 
 static int decrypt_child(int in, int out, const unsigned char publ[PUBL_SIZE],
 	const unsigned char priv[PRIV_SIZE]);
@@ -47,8 +54,8 @@ static int decrypt_ed25519(int in, int out, const unsigned char publ[PUBL_SIZE],
 	const unsigned char priv[PRIV_SIZE]);
 static int decrypt_x25519(int in, int out, const unsigned char xpubl[XPUBL_SIZE],
 	const unsigned char xpriv[XPRIV_SIZE]);
-static int decrypt_loop(int in, int out, unsigned char nonce[NONCE_SIZE],
-	const unsigned char key[KEY_SIZE]);
+static int decrypt_loop(int in, int out, size_t outlen,
+	unsigned char nonce[NONCE_SIZE], const unsigned char key[KEY_SIZE]);
 
 static int gen_x25519_pair(unsigned char xpubl[XPUBL_SIZE],
 	unsigned char xpriv[XPRIV_SIZE]);
@@ -64,7 +71,8 @@ static int ephem_priv(const unsigned char xpubl[XPUBL_SIZE],
 static int privsep_child(void);
 
 pid_t
-encrypt(int *in, int out, const unsigned char publ[XPUBL_SIZE])
+encrypt(int *in, size_t inlen, int out,
+	const unsigned char publ[XPUBL_SIZE])
 {
 	pid_t pid;
 	int pipefd[2];
@@ -85,7 +93,7 @@ encrypt(int *in, int out, const unsigned char publ[XPUBL_SIZE])
 	case 0:
 		/* child */
 		(void)close(pipefd[1]);
-		if (encrypt_child(pipefd[0], out, publ) == -1) {
+		if (encrypt_child(pipefd[0], inlen, out, publ) == -1) {
 			(void)close(pipefd[0]);
 			exit(1);
 		}
@@ -137,32 +145,51 @@ decrypt(int in, int *out, const unsigned char publ[PUBL_SIZE],
 }
 
 static int
-encrypt_child(int in, int out, const unsigned char publ[PUBL_SIZE])
+encrypt_child(int in, size_t inlen, int out, const unsigned char publ[PUBL_SIZE])
 {
 	if (privsep_child() == -1) {
 		return -1;
 	}
-	return encrypt_ed25519(in, out, publ);
+	return encrypt_ed25519(in, inlen, out, publ);
 }
 
 static int
-encrypt_ed25519(int in, int out, const unsigned char publ[PUBL_SIZE])
+encrypt_ed25519(int in, size_t inlen, int out, const unsigned char publ[PUBL_SIZE])
 {
 	unsigned char xpubl[XPUBL_SIZE];
 	if (crypto_sign_ed25519_pk_to_curve25519(xpubl, publ) == -1) {
 		return -1;
 	}
-	return encrypt_x25519(in, out, xpubl);
+	return encrypt_x25519(in, inlen, out, xpubl);
 }
 
 static int
-encrypt_x25519(int in, int out, const unsigned char xpubl[XPUBL_SIZE])
+encrypt_x25519(int in, size_t inlen, int out,
+	const unsigned char xpubl[XPUBL_SIZE])
 {
+	uint16_t version;
+	uint64_t inlen64;
 	unsigned char epubl[XPUBL_SIZE];
 	unsigned char key[KEY_SIZE];
 	unsigned char nonce[NONCE_SIZE];
 
-	/* ephemeral key */
+	/* VERSION */
+	hton_16(&version, cipher_version);
+	if (write2(out, &version, sizeof(version)) != sizeof(version)) {
+		return -1;
+	}
+
+	/* LENGTH */
+	if (inlen == 0 || inlen > UINT64_MAX) {
+		return -1;
+	}
+	inlen64 = inlen;
+	hton_64(&inlen64, inlen64);
+	if (write2(out, &inlen64, sizeof(inlen64)) != sizeof(inlen64)) {
+		return -1;
+	}
+
+	/* EPHEM_PUBL */
 	if (ephem_publ(xpubl, epubl, key) == -1) {
 		sodium_memzero(key, KEY_SIZE);
 		return -1;
@@ -172,14 +199,14 @@ encrypt_x25519(int in, int out, const unsigned char xpubl[XPUBL_SIZE])
 		return -1;
 	}
 
-	/* nonce */
+	/* NONCE */
 	randombytes_buf(nonce, NONCE_SIZE);
 	if (write2(out, nonce, NONCE_SIZE) != NONCE_SIZE) {
 		sodium_memzero(key, KEY_SIZE);
 		return -1;
 	}
 
-	if (encrypt_loop(in, out, nonce, key) == -1) {
+	if (encrypt_loop(in, inlen, out, nonce, key) == -1) {
 		sodium_memzero(key, KEY_SIZE);
 		return -1;
 	}
@@ -189,26 +216,26 @@ encrypt_x25519(int in, int out, const unsigned char xpubl[XPUBL_SIZE])
 }
 
 static int
-encrypt_loop(int in, int out, unsigned char nonce[NONCE_SIZE],
+encrypt_loop(int in, size_t inlen, int out, unsigned char nonce[NONCE_SIZE],
 	const unsigned char key[KEY_SIZE])
 {
 	unsigned char cipher[BLOCK_SIZE + CIPHER_OVERHEAD];
 	unsigned char *plain;
 	ssize_t r;
 	unsigned long long cipher_len;
+	size_t n;
 
 	plain = cipher;
 
-	for (;;) {
-		if ((r = read2(in, plain, BLOCK_SIZE)) == -1) {
+	while (inlen > 0) {
+		n = min(BLOCK_SIZE, inlen);
+
+		if ((r = read2(in, plain, n)) != n) {
 			sodium_memzero(plain, BLOCK_SIZE);
 			return -1;
 		}
-		if (r == 0) {
-			/* EOF */
-			sodium_memzero(plain, BLOCK_SIZE);
-			return 0;
-		}
+		inlen -= n;
+
 		sodium_increment(nonce, NONCE_SIZE);
 		if (crypto_aead_chacha20poly1305_encrypt(cipher, &cipher_len,
 			plain, (unsigned long long)r, NULL, 0, NULL, nonce,
@@ -216,16 +243,15 @@ encrypt_loop(int in, int out, unsigned char nonce[NONCE_SIZE],
 			sodium_memzero(plain, BLOCK_SIZE);
 			return -1;
 		}
+
 		if (write2(out, cipher, cipher_len) != cipher_len) {
 			sodium_memzero(plain, BLOCK_SIZE);
 			return -1;
 		}
-		if (r != BLOCK_SIZE) {
-			/* under-read, last block encrypted */
-			sodium_memzero(plain, BLOCK_SIZE);
-			return 0;
-		}
 	}
+
+	sodium_memzero(plain, BLOCK_SIZE);
+	return 0;
 }
 
 static int
@@ -262,11 +288,33 @@ static int
 decrypt_x25519(int in, int out, const unsigned char xpubl[XPUBL_SIZE],
 	const unsigned char xpriv[XPRIV_SIZE])
 {
+	uint16_t version;
+	size_t outlen;
+	uint64_t outlen64;
 	unsigned char epubl[XPUBL_SIZE];
 	unsigned char key[KEY_SIZE];
 	unsigned char nonce[NONCE_SIZE];
 
-	/* ephemeral key */
+	/* VERSION */
+	if (read2(in, &version, sizeof(version)) != sizeof(version)) {
+		return -1;
+	}
+	version = ntoh_16(&version);
+	if (version != cipher_version) {
+		return -1;
+	}
+
+	/* LENGTH */
+	if (read2(in, &outlen64, sizeof(outlen64)) != sizeof(outlen64)) {
+		return -1;
+	}
+	outlen64 = ntoh_64(&outlen64);
+	outlen = outlen64;
+	if (outlen == 0) {
+		return -1;
+	}
+
+	/* EPHEM_PUBL */
 	if (read2(in, epubl, XPUBL_SIZE) != XPUBL_SIZE) {
 		return -1;
 	}
@@ -275,13 +323,13 @@ decrypt_x25519(int in, int out, const unsigned char xpubl[XPUBL_SIZE],
 		return -1;
 	}
 
-	/* nonce */
+	/* NONCE */
 	if (read2(in, nonce, NONCE_SIZE) != NONCE_SIZE) {
 		sodium_memzero(key, KEY_SIZE);
 		return -1;
 	}
 
-	if (decrypt_loop(in, out, nonce, key) == -1) {
+	if (decrypt_loop(in, out, outlen, nonce, key) == -1) {
 		sodium_memzero(key, KEY_SIZE);
 		return -1;
 	}
@@ -291,26 +339,26 @@ decrypt_x25519(int in, int out, const unsigned char xpubl[XPUBL_SIZE],
 }
 
 static int
-decrypt_loop(int in, int out, unsigned char nonce[NONCE_SIZE],
+decrypt_loop(int in, int out, size_t outlen, unsigned char nonce[NONCE_SIZE],
 	const unsigned char key[KEY_SIZE])
 {
 	unsigned char cipher[BLOCK_SIZE + CIPHER_OVERHEAD];
 	unsigned char *plain;
 	ssize_t r;
 	unsigned long long plain_len;
+	size_t n;
 
 	plain = cipher;
 
-	for (;;) {
-		if ((r = read(in, cipher, BLOCK_SIZE + CIPHER_OVERHEAD)) == -1) {
+	while (outlen > 0) {
+		n = min(BLOCK_SIZE, outlen);
+
+		if ((r = read2(in, cipher, n + CIPHER_OVERHEAD)) != n + CIPHER_OVERHEAD) {
 			sodium_memzero(plain, BLOCK_SIZE);
 			return -1;
 		}
-		if (r == 0) {
-			/* EOF */
-			sodium_memzero(plain, BLOCK_SIZE);
-			return 0;
-		}
+		outlen -= n;
+
 		sodium_increment(nonce, NONCE_SIZE);
 		if (crypto_aead_chacha20poly1305_decrypt(plain, &plain_len,
 			NULL, cipher, (unsigned long long)r, NULL, 0, nonce,
@@ -318,16 +366,15 @@ decrypt_loop(int in, int out, unsigned char nonce[NONCE_SIZE],
 			sodium_memzero(plain, BLOCK_SIZE);
 			return -1;
 		}
+
 		if (write2(out, plain, plain_len) != plain_len) {
 			sodium_memzero(plain, BLOCK_SIZE);
 			return -1;
 		}
-		if (r != BLOCK_SIZE + CIPHER_OVERHEAD) {
-			/* under-read, last block decrypted */
-			sodium_memzero(plain, BLOCK_SIZE);
-			return 0;
-		}
 	}
+
+	sodium_memzero(plain, BLOCK_SIZE);
+	return 0;
 }
 
 /* generate a new x25519 keypair */

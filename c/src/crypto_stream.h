@@ -5,9 +5,8 @@
 
 #include "crypto.h"
 
-/* Encrypt */
-
-pid_t encrypt(int *in, int out, const unsigned char publ[PUBL_SIZE]);
+pid_t encrypt(int *in, size_t inlen, int out,
+	const unsigned char publ[PUBL_SIZE]);
 pid_t decrypt(int in, int *out, const unsigned char publ[PUBL_SIZE],
 	const unsigned char priv[PRIV_SIZE]);
 

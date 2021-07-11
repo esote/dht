@@ -22,8 +22,6 @@ send_message(const struct dht *dht, int afd, uint16_t msg_type,
 	struct message m;
 	time_t now;
 
-	m.version = VERSION;
-
 	(void)memcpy(m.hdr.session_id, session_id, SESSION_ID_SIZE);
 	if ((now = time(NULL)) == -1) {
 		return -1;
@@ -32,13 +30,13 @@ send_message(const struct dht *dht, int afd, uint16_t msg_type,
 	(void)memcpy(m.hdr.network_id, dht->network_id, NETWORK_ID_SIZE);
 	m.hdr.msg_type = msg_type;
 
-	(void)memcpy(m.hdr.node.id, dht->id, NODE_ID_SIZE);
-	(void)memcpy(m.hdr.node.dyn_x, dht->dyn_x, DYN_X_SIZE);
-	if ((m.hdr.node.addr = strdup(dht->addr)) == NULL) {
+	(void)memcpy(m.hdr.self.id, dht->id, NODE_ID_SIZE);
+	(void)memcpy(m.hdr.self.dyn_x, dht->dyn_x, DYN_X_SIZE);
+	if ((m.hdr.self.addr = strdup(dht->addr)) == NULL) {
 		/* TODO: if strlen(dht->addr) == 0 null might be right */
 		return -1;
 	}
-	m.hdr.node.port = dht->port;
+	m.hdr.self.port = dht->port;
 
 	if (p == NULL) {
 		(void)memset(&m.payload, 0, sizeof(m.payload));
@@ -46,10 +44,10 @@ send_message(const struct dht *dht, int afd, uint16_t msg_type,
 		m.payload = *p;
 	}
 	if (message_encode(&m, afd, dht->priv, target_id) == -1) {
-		free(m.hdr.node.addr);
+		free(m.hdr.self.addr);
 		return -1;
 	}
-	free(m.hdr.node.addr);
+	free(m.hdr.self.addr);
 	return 0;
 }
 

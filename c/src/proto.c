@@ -16,13 +16,20 @@
 
 #define SIG_BODY_SIZE ((SESSION_ID_SIZE) + sizeof(uint64_t))
 
-static bool supported_version(uint16_t version);
 static bool supported_msg_type(uint16_t msg_type);
 static bool message_keep_open(const struct message *m);
 static void free_node(struct node *n);
 static int payload_close(uint16_t msg_type, union payload *p);
 
-static int write_prebody(const struct message *m, int out);
+static int length_message(const struct message *m, size_t *length);
+static int length_node(const struct node *n, size_t *length);
+static int length_header(const struct header *hdr, size_t *length);
+static int length_payload(uint16_t type, const union payload *p, size_t *length);
+static int length_payload_data(const struct data_payload *p, size_t *length);
+static int length_payload_fnode(const struct fnode_payload *p, size_t *length);
+static int length_payload_fnode_resp(const struct fnode_resp_payload *p, size_t *length);
+static int length_payload_fval(const struct fval_payload *p, size_t *length);
+
 static int write_node(const struct node *n, int out);
 static int write_header(const struct header *hdr, int out,
 	const unsigned char priv[PRIV_SIZE]);
@@ -32,7 +39,6 @@ static int write_payload_fnode(const struct fnode_payload *p, int out);
 static int write_payload_fnode_resp(const struct fnode_resp_payload *p, int out);
 static int write_payload_fval(const struct fval_payload *p, int out);
 
-static int read_prebody(struct message *m, int in);
 static int read_node(struct node *n, int in);
 static int read_header(struct header *hdr, int in);
 static int read_payload(uint16_t type, union payload *p, int in);
@@ -40,6 +46,8 @@ static int read_payload_data(struct data_payload *p, int in);
 static int read_payload_fnode(struct fnode_payload *p, int in);
 static int read_payload_fnode_resp(struct fnode_resp_payload *p, int in);
 static int read_payload_fval(struct fval_payload *p, int in);
+
+static const uint16_t proto_version = 0;
 
 int
 message_encode(const struct message *m, int out,
@@ -49,14 +57,14 @@ message_encode(const struct message *m, int out,
 	int in;
 	pid_t child;
 	int status;
+	size_t inlen;
 
-	/* prebody is unencrypted */
-	if (write_prebody(m, out) == -1) {
+	if (length_message(m, &inlen) == -1) {
 		return -1;
 	}
 
 	/* get input fd to encrypt body */
-	if ((child = encrypt(&in, out, target_publ)) == -1) {
+	if ((child = encrypt(&in, inlen, out, target_publ)) == -1) {
 		return -1;
 	}
 
@@ -108,13 +116,7 @@ message_decode(int in, const unsigned char publ[PUBL_SIZE],
 	}
 	m->_child = -1;
 	m->hdr.msg_type = TYPE_PING;
-	m->hdr.node.addr = NULL;
-
-	/* prebody is unencrypted */
-	if (read_prebody(m, in) == -1) {
-		(void)message_close(m);
-		return NULL;
-	}
+	m->hdr.self.addr = NULL;
 
 	/* get output fd to decrypt body */
 	if ((child = decrypt(in, &out, publ, priv)) == -1) {
@@ -169,15 +171,9 @@ message_close(struct message *m)
 	if (m->_child != -1 && kill(m->_child, SIGKILL) == -1) {
 		ret = -1;
 	}
-	free_node(&m->hdr.node);
+	free_node(&m->hdr.self);
 	free(m);
 	return ret;
-}
-
-static bool
-supported_version(uint16_t version)
-{
-	return version == VERSION;
 }
 
 static bool
@@ -229,19 +225,99 @@ payload_close(uint16_t msg_type, union payload *p)
 }
 
 static int
-write_prebody(const struct message *m, int out)
+length_message(const struct message *m, size_t *len)
 {
-	uint8_t version[sizeof(m->version)];
-
-	/* VERSION */
-	if (!supported_version(m->version)) {
+	size_t hdr, payload;
+	if (length_header(&m->hdr, &hdr) == -1) {
 		return -1;
 	}
-	hton_16(version, m->version);
-	if (write2(out, version, sizeof(version)) != sizeof(version)) {
+	if (length_payload(m->hdr.msg_type, &m->payload, &payload) == -1) {
 		return -1;
 	}
+	*len = hdr;
+	if (payload > SIZE_MAX - *len) {
+		return -1;
+	}
+	*len += payload;
+	return 0;
+}
 
+static int
+length_node(const struct node *n, size_t *len)
+{
+	*len = NODE_ID_SIZE + DYN_X_SIZE + sizeof(uint16_t)
+		+ strnlen(n->addr, UINT16_MAX) + sizeof(n->port);
+	return 0;
+}
+
+static int
+length_header(const struct header *hdr, size_t *len)
+{
+	size_t self;
+	if (length_node(&hdr->self, &self) == -1) {
+		return -1;
+	}
+	*len = sizeof(uint16_t) + SESSION_ID_SIZE + sizeof(uint64_t) + SIG_SIZE
+		+ NETWORK_ID_SIZE + sizeof(uint16_t) + self;
+	return 0;
+}
+
+static int
+length_payload(uint16_t type, const union payload *p, size_t *len)
+{
+	switch (type) {
+	case TYPE_PING:
+		*len = 0;
+		return 0;
+	case TYPE_DATA:
+		return length_payload_data(&p->data, len);
+	case TYPE_FNODE:
+		return length_payload_fnode(&p->fnode, len);
+	case TYPE_FNODE_RESP:
+		return length_payload_fnode_resp(&p->fnode_resp, len);
+	case TYPE_FVAL:
+		return length_payload_fval(&p->fval, len);
+	default:
+		return -1;
+	}
+}
+
+static int
+length_payload_data(const struct data_payload *p, size_t *len)
+{
+	*len = KEY_SIZE + sizeof(p->length);
+	if (p->length > SIZE_MAX - *len) {
+		return -1;
+	}
+	*len += p->length;
+	return 0;
+}
+
+static int
+length_payload_fnode(const struct fnode_payload *p, size_t *len)
+{
+	*len = sizeof(p->count) + NODE_ID_SIZE + DYN_X_SIZE;
+	return 0;
+}
+
+static int
+length_payload_fnode_resp(const struct fnode_resp_payload *p, size_t *len)
+{
+	size_t i, node;
+	*len = sizeof(p->count);
+	for (i = 0; i < p->count; i++) {
+		if (length_node(&p->nodes[i], &node) == -1) {
+			return -1;
+		}
+		*len += node;
+	}
+	return 0;
+}
+
+static int
+length_payload_fval(const struct fval_payload *p, size_t *len)
+{
+	*len = KEY_SIZE;
 	return 0;
 }
 
@@ -295,6 +371,7 @@ static int
 write_header(const struct header *hdr, int out,
 	const unsigned char priv[PRIV_SIZE])
 {
+	uint16_t version;
 	uint8_t sig_body[SIG_BODY_SIZE];
 	uint8_t sig[SIG_SIZE];
 	uint8_t *p;
@@ -302,6 +379,13 @@ write_header(const struct header *hdr, int out,
 	uint8_t msg_type[sizeof(hdr->msg_type)];
 
 	p = sig_body;
+
+	/* VERSION */
+	version = proto_version;
+	hton_16(&version, version);
+	if (write2(out, &version, sizeof(version)) != sizeof(version)) {
+		return -1;
+	}
 
 	/* SESSION ID */
 	(void)memcpy(p, hdr->session_id, SESSION_ID_SIZE);
@@ -341,7 +425,7 @@ write_header(const struct header *hdr, int out,
 		return -1;
 	}
 
-	if (write_node(&hdr->node, out) == -1) {
+	if (write_node(&hdr->self, out) == -1) {
 		return -1;
 	}
 
@@ -455,23 +539,6 @@ write_payload_fval(const struct fval_payload *p, int out)
 }
 
 static int
-read_prebody(struct message *m, int in)
-{
-	uint8_t version[sizeof(m->version)];
-
-	/* VERSION */
-	if (read2(in, version, sizeof(version)) != sizeof(version)) {
-		return -1;
-	}
-	m->version = ntoh_16(version);
-	if (!supported_version(m->version)) {
-		return -1;
-	}
-
-	return 0;
-}
-
-static int
 read_node(struct node *n, int in)
 {
 	size_t str_addrlen;
@@ -522,6 +589,7 @@ read_node(struct node *n, int in)
 static int
 read_header(struct header *hdr, int in)
 {
+	uint16_t version;
 	uint8_t sig_body[SIG_BODY_SIZE];
 	uint8_t sig[SIG_SIZE];
 	uint8_t *p;
@@ -529,6 +597,15 @@ read_header(struct header *hdr, int in)
 	uint8_t msg_type[sizeof(hdr->msg_type)];
 
 	p = sig_body;
+
+	/* VERSION */
+	if (read2(in, &version, sizeof(version)) != sizeof(version)) {
+		return -1;
+	}
+	version = ntoh_16(&version);
+	if (version != proto_version) {
+		return -1;
+	}
 
 	if (read2(in, sig_body, SIG_BODY_SIZE) != SIG_BODY_SIZE) {
 		return -1;
@@ -567,13 +644,13 @@ read_header(struct header *hdr, int in)
 		return -1;
 	}
 
-	if (read_node(&hdr->node, in) == -1) {
+	if (read_node(&hdr->self, in) == -1) {
 		return -1;
 	}
 
 	/* verify SIG_BODY was signed by sender's ID */
-	if (!sign_verify(sig, sig_body, SIG_BODY_SIZE, hdr->node.id)) {
-		free_node(&hdr->node);
+	if (!sign_verify(sig, sig_body, SIG_BODY_SIZE, hdr->self.id)) {
+		free_node(&hdr->self);
 		return -1;
 	}
 

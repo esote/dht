@@ -1,51 +1,69 @@
-Message format
-	VERSION [2 byte] uint16_t
-	BODY [variable bytes]
+1. Security layer
 
-Body format
+1.1 Message format
+
+	VERSION [2 byte] uint16_t
+	LENGTH [8 bytes] uint64_t >0
 	EPHEM_PUBL [32 bytes]
 	NONCE [8 bytes]
 	CIPHERTEXT [variable bytes]
-		BLOCK [262144 bytes, except the last block]
-		POLY1305_TAG [16 bytes]
+		BLOCKS [variable bytes]
+			See "Ciphertext body format"
 
-Body ciphertext format
+1.2 Ciphertext block format
+
+	BLOCK [65535 bytes, except the last block]
+	POLY1305_TAG [16 bytes]
+
+2. Communication layer
+
+1.1 Message format
+
 	HEADER [variable bytes]
+		See "Header format"
 	PAYLOAD [variable bytes]
+		See one of the payload formats
 
-Node format
+1.2 Header format
+
+	VERSION [2 bytes] uint16_t
+	SESSION_ID [20 bytes]
+	EXPIRATION [8 bytes] uint64_t
+	SIGNATURE [64 bytes]
+	NETWORK_ID [32 bytes]
+	MSG_TYPE [2 bytes] uint16_t
+	SELF [variable format]
+		See "Node format"
+
+1.3 Node format
+
 	ID [32 bytes]
 	DYN_X [64 bytes]
 	ADDRLEN [2 bytes] uint16_t
 	ADDR [ADDRLEN bytes]
 	PORT [2 bytes] uint16_t
 
-Header format
-	SESSION_ID [20 bytes]
-	EXPIRATION [8 bytes] uint64_t
-	SIG [64 bytes]
-	NETWORK_ID [32 bytes]
-	MSG_TYPE [2 bytes] uint16_t
-	NODE [variable bytes]
-		Node format
+1.4 Ping payload format
 
-Ping payload format [0 bytes]
+	(Empty)
 
-Data payload format
+1.5 Data payload format
+
 	KEY [64 bytes]
-	LENGTH [8 bytes] uint64_t >0
+	LENGTH [8 bytes] uint64_t
 	VALUE [LENGTH bytes]
 
-Find node payload format
+1.6 Find node payload format
+
 	COUNT [1 byte] uint8_t >0
 	TARGET_ID [32 bytes]
 	TARGET_DYN_X [64 bytes]
 
-Find node resp payload format
+1.7 Find node response payload format
+
 	COUNT [1 byte] uint8_t
 	NODES [COUNT times]
-		NODE [variable bytes]
-			Node format
+		See "Node format"
 
-Find value payload format
+1.8 Find value payload format
 	KEY [64 bytes]

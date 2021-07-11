@@ -8,7 +8,6 @@
 #include "crypto.h"
 #include "io.h"
 
-#define VERSION 0
 #define SESSION_ID_SIZE 20
 #define NETWORK_ID_SIZE 32
 #define NODE_ID_SIZE PUBL_SIZE
@@ -65,11 +64,10 @@ struct header {
 	time_t expiration;
 	uint8_t network_id[NETWORK_ID_SIZE];
 	uint16_t msg_type;
-	struct node node;
+	struct node self;
 };
 
 struct message {
-	uint16_t version;
 	struct header hdr;
 	union payload payload;
 
