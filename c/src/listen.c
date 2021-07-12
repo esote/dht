@@ -19,6 +19,7 @@
 #include "proto.h"
 #include "rtable.h"
 #include "storer.h"
+#include "util.h"
 
 #define LISTEN_BACKLOG 64
 
@@ -46,13 +47,16 @@ listener_start(void *arg)
 
 	dht = arg;
 	if ((sfd = listen_net(dht->port)) == -1) {
+		dht_log(LOG_ERR, "%s", strerror(errno));
 		return NULL;
 	}
 	if (listener_accept(dht, sfd) == -1) {
+		dht_log(LOG_ERR, "%s", strerror(errno));
 		(void)close(sfd);
 		return NULL;
 	}
 	if (close(sfd) == -1) {
+		dht_log(LOG_ERR, "%s", strerror(errno));
 		return NULL;
 	}
 	return &listen_success;
@@ -76,25 +80,29 @@ listen_net(uint16_t port)
 	n = snprintf(str_port, sizeof(str_port), "%" PRIu16, port);
 	assert(n >= 0 && n < sizeof(str_port));
 
-	if (getaddrinfo(NULL, str_port, &hints, &result) != 0) {
-		/* TODO: print return value, retry? */
+	if ((n = getaddrinfo(NULL, str_port, &hints, &result)) != 0) {
+		dht_log(LOG_ERR, "%s", gai_strerror(n));
 		return -1;
 	}
 
 	for (rp = result; rp != NULL; rp = rp->ai_next) {
 		fd = socket(rp->ai_family, rp->ai_socktype | SOCK_NONBLOCK, rp->ai_protocol);
 		if (fd == -1) {
+			dht_log(LOG_WARN, "%s", strerror(errno));
 			continue;
 		}
 		if (socket_reuse(fd) == -1) {
+			dht_log(LOG_WARN, "%s", strerror(errno));
 			(void)close(fd);
 			continue;
 		}
 		if (bind(fd, rp->ai_addr, rp->ai_addrlen) == -1) {
+			dht_log(LOG_WARN, "%s", strerror(errno));
 			(void)close(fd);
 			continue;
 		}
 		if (listen(fd, LISTEN_BACKLOG) == -1) {
+			dht_log(LOG_WARN, "%s", strerror(errno));
 			(void)close(fd);
 			continue;
 		}
@@ -104,7 +112,7 @@ listen_net(uint16_t port)
 	freeaddrinfo(result);
 
 	if (rp == NULL) {
-		/* no address succeeded */
+		dht_log(LOG_ERR, "no address succeeded");
 		return -1;
 	}
 
@@ -116,7 +124,7 @@ socket_reuse(int fd)
 {
 	int opt = 1;
 	if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt)) == -1) {
-		return 1;
+		return -1;
 	}
 	return setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 }
@@ -135,12 +143,14 @@ listener_accept(struct dht *dht, int sfd)
 				errno = 0;
 				continue;
 			}
+			dht_log(LOG_ERR, "%s", strerror(errno));
 			return -1;
 		}
 		if (listener_work(dht, afd) == -1) {
-			/* TODO: log */
+			dht_log(LOG_WARN, "%s", strerror(errno));
 		}
 		if (close(afd) == -1) {
+			dht_log(LOG_ERR, "%s", strerror(errno));
 			return -1;
 		}
 	}

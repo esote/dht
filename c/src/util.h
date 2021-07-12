@@ -3,6 +3,9 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <syslog.h>
+
+#define dht_log(priority, format, ...) syslog((priority), "%s:%s:%d [%d] " format, __FILE__, __func__, __LINE__, getpid(), ## __VA_ARGS__)
 
 size_t min(size_t x, size_t y);
 char *strdup(const char *str);
