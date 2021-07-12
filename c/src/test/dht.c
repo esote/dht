@@ -37,7 +37,6 @@ main(int argc, char *argv[])
 
 	struct dht_config config = {
 		.network_id = {1},
-		.timeout = 3600000
 	};
 
 	config.addr = "localhost";

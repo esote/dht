@@ -36,7 +36,6 @@ dht_new(const struct dht_config *config)
 		return NULL;
 	}
 	dht->port = config->port;
-	dht->timeout = config->timeout;
 	dht->storer = config->storer;
 
 	/* Create node identity */

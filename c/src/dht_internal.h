@@ -17,6 +17,8 @@
 #error listener count invalid
 #endif
 
+#define TIMEOUT 5
+
 struct dht {
 	uint8_t network_id[NETWORK_ID_SIZE];
 
@@ -26,8 +28,6 @@ struct dht {
 
 	uint8_t id[NODE_ID_SIZE];
 	unsigned char priv[PRIV_SIZE];
-
-	time_t timeout;
 
 	pthread_t listeners[LISTENER_COUNT];
 	sem_t listen_exit;

@@ -14,7 +14,6 @@ struct dht_config {
 	uint8_t network_id[NETWORK_ID_SIZE];
 	char *addr;
 	uint16_t port;
-	time_t timeout;
 
 	struct storer *storer;
 };

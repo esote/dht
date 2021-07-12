@@ -26,7 +26,7 @@ send_message(const struct dht *dht, int afd, uint16_t msg_type,
 	if ((now = time(NULL)) == -1) {
 		return -1;
 	}
-	m.hdr.expiration = now + dht->timeout; /* TODO: might overflow */
+	m.hdr.expiration = now + TIMEOUT; /* TODO: might overflow */
 	(void)memcpy(m.hdr.network_id, dht->network_id, NETWORK_ID_SIZE);
 	m.hdr.msg_type = msg_type;
 
