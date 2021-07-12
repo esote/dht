@@ -13,6 +13,9 @@
 #include "storer.h"
 
 #define LISTENER_COUNT 3
+#if LISTENER_COUNT > SEM_VALUE_MAX
+#error listener count invalid
+#endif
 
 struct dht {
 	uint8_t network_id[NETWORK_ID_SIZE];
