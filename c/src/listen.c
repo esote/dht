@@ -88,21 +88,21 @@ listen_net(uint16_t port)
 	for (rp = result; rp != NULL; rp = rp->ai_next) {
 		fd = socket(rp->ai_family, rp->ai_socktype | SOCK_NONBLOCK, rp->ai_protocol);
 		if (fd == -1) {
-			dht_log(LOG_WARN, "%s", strerror(errno));
+			dht_log(LOG_WARNING, "%s", strerror(errno));
 			continue;
 		}
 		if (socket_reuse(fd) == -1) {
-			dht_log(LOG_WARN, "%s", strerror(errno));
+			dht_log(LOG_WARNING, "%s", strerror(errno));
 			(void)close(fd);
 			continue;
 		}
 		if (bind(fd, rp->ai_addr, rp->ai_addrlen) == -1) {
-			dht_log(LOG_WARN, "%s", strerror(errno));
+			dht_log(LOG_WARNING, "%s", strerror(errno));
 			(void)close(fd);
 			continue;
 		}
 		if (listen(fd, LISTEN_BACKLOG) == -1) {
-			dht_log(LOG_WARN, "%s", strerror(errno));
+			dht_log(LOG_WARNING, "%s", strerror(errno));
 			(void)close(fd);
 			continue;
 		}
@@ -147,7 +147,7 @@ listener_accept(struct dht *dht, int sfd)
 			return -1;
 		}
 		if (listener_work(dht, afd) == -1) {
-			dht_log(LOG_WARN, "%s", strerror(errno));
+			dht_log(LOG_WARNING, "%s", strerror(errno));
 		}
 		if (close(afd) == -1) {
 			dht_log(LOG_ERR, "%s", strerror(errno));
