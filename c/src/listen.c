@@ -141,7 +141,6 @@ listener_accept(struct dht *dht, int sfd)
 {
 	struct pollfd pfd;
 	int afd;
-	int ready;
 
 	pfd.fd = sfd;
 	pfd.events = POLLIN;
@@ -152,17 +151,16 @@ listener_accept(struct dht *dht, int sfd)
 		}
 
 		/* wait for new connection, with timeout */
-		ready = poll(&pfd, 1, ACCEPT_TIMEOUT);
-		if (ready == -1) {
+		switch (poll(&pfd, 1, ACCEPT_TIMEOUT)) {
+		case -1:
 			if (errno == EAGAIN || errno == EINTR) {
-				dht_log(LOG_DEBUG, "accept poll interrupted");
+				dht_log(LOG_DEBUG, "poll interrupted");
 				errno = 0;
 				continue;
 			}
 			dht_log(LOG_ERR, "%s", strerror(errno));
 			return -1;
-		} else if (ready == 0) {
-			dht_log(LOG_DEBUG, "accept poll timed out");
+		case 0:
 			continue;
 		}
 

@@ -127,7 +127,7 @@ static int
 connect_timeout(int fd, const struct addrinfo *rp)
 {
 	struct pollfd pfd;
-	int ready, err;
+	int err;
 	socklen_t errsize;
 
 	if (connect(fd, rp->ai_addr, rp->ai_addrlen) == -1) {
@@ -142,11 +142,11 @@ connect_timeout(int fd, const struct addrinfo *rp)
 
 	pfd.fd = fd;
 	pfd.events = POLLOUT;
-	ready = poll(&pfd, 1, CONNECT_TIMEOUT);
-	if (ready == -1) {
+	switch (poll(&pfd, 1, CONNECT_TIMEOUT)) {
+	case -1:
 		return -1;
-	} else if (ready == 0) {
-		dht_log(LOG_DEBUG, "connect timed out");
+	case 0:
+		dht_log(LOG_DEBUG, "poll timed out");
 		return -1;
 	}
 
