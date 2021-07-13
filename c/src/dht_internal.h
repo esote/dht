@@ -17,7 +17,21 @@
 #error listener count invalid
 #endif
 
-#define TIMEOUT 5
+/* Message expiration time (s) */
+#define MSG_EXPIRATION 25
+
+/* Remote connect timeout (s) */
+#define CONNECT_TIMEOUT 3000
+
+/* Remote accept timeout (ms) */
+#define ACCEPT_TIMEOUT 1000
+
+/* Socket timeout during read/write */
+#define SOCKET_TIMEOUT_SEC 1
+#define SOCKET_TIMEOUT_USEC 0
+
+/* Socket timeout waiting for available read/write (ms) */
+#define SOCKET_POLL_TIMEOUT 1000
 
 struct dht {
 	uint8_t network_id[NETWORK_ID_SIZE];
@@ -40,6 +54,7 @@ int send_message(const struct dht *dht, int afd, uint16_t msg_type,
 	const uint8_t session_id[SESSION_ID_SIZE], const union payload *p,
 	const uint8_t target_id[NODE_ID_SIZE]);
 
+int socket_timeout(int fd);
 int connect_remote(const char *addr, uint16_t port);
 
 int dht_update(struct dht *dht, struct node *target);

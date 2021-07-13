@@ -3,6 +3,7 @@
 #include <inttypes.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <semaphore.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -86,9 +87,15 @@ listen_net(uint16_t port)
 	}
 
 	for (rp = result; rp != NULL; rp = rp->ai_next) {
-		fd = socket(rp->ai_family, rp->ai_socktype | SOCK_NONBLOCK, rp->ai_protocol);
+		fd = socket(rp->ai_family, rp->ai_socktype | SOCK_NONBLOCK,
+			rp->ai_protocol);
 		if (fd == -1) {
 			dht_log(LOG_WARNING, "%s", strerror(errno));
+			continue;
+		}
+		if (socket_timeout(fd) == -1) {
+			dht_log(LOG_WARNING, "%s", strerror(errno));
+			(void)close(fd);
 			continue;
 		}
 		if (socket_reuse(fd) == -1) {
@@ -132,12 +139,33 @@ socket_reuse(int fd)
 static int
 listener_accept(struct dht *dht, int sfd)
 {
+	struct pollfd pfd;
 	int afd;
+	int ready;
+
+	pfd.fd = sfd;
+	pfd.events = POLLIN;
+
 	for (;;) {
-		/* TODO: setsockopts timeouts */
 		if (listener_should_exit(dht)) {
 			return 0;
 		}
+
+		/* wait for new connection, with timeout */
+		ready = poll(&pfd, 1, ACCEPT_TIMEOUT);
+		if (ready == -1) {
+			if (errno == EAGAIN || errno == EINTR) {
+				dht_log(LOG_DEBUG, "accept poll interrupted");
+				errno = 0;
+				continue;
+			}
+			dht_log(LOG_ERR, "%s", strerror(errno));
+			return -1;
+		} else if (ready == 0) {
+			dht_log(LOG_DEBUG, "accept poll timed out");
+			continue;
+		}
+
 		if ((afd = accept(sfd, NULL, NULL)) == -1) {
 			if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
 				errno = 0;
@@ -145,6 +173,11 @@ listener_accept(struct dht *dht, int sfd)
 			}
 			dht_log(LOG_ERR, "%s", strerror(errno));
 			return -1;
+		}
+		if (socket_timeout(afd) == -1) {
+			dht_log(LOG_WARNING, "%s", strerror(errno));
+			(void)close(afd);
+			continue;
 		}
 		if (listener_work(dht, afd) == -1) {
 			dht_log(LOG_WARNING, "%s", strerror(errno));

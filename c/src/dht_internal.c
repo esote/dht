@@ -1,7 +1,9 @@
 #include <assert.h>
+#include <errno.h>
 #include <inttypes.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <stdint.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -11,7 +13,9 @@
 
 #include "dht_internal.h"
 #include "proto.h"
+#include "util.h"
 
+static int connect_timeout(int fd, const struct addrinfo *rp);
 static bool ping_node(const struct node *n, void *arg);
 
 int
@@ -23,13 +27,13 @@ send_message(const struct dht *dht, int afd, uint16_t msg_type,
 	time_t now;
 
 	(void)memcpy(m.hdr.session_id, session_id, SESSION_ID_SIZE);
-	if ((now = time(NULL)) == -1) {
+	if ((now = time(NULL)) == -1 || now > (INT64_MAX - MSG_EXPIRATION)) {
 		return -1;
 	}
-	m.hdr.expiration = now + TIMEOUT; /* TODO: might overflow */
+	m.hdr.expiration = now + MSG_EXPIRATION;
+
 	(void)memcpy(m.hdr.network_id, dht->network_id, NETWORK_ID_SIZE);
 	m.hdr.msg_type = msg_type;
-
 	(void)memcpy(m.hdr.self.id, dht->id, NODE_ID_SIZE);
 	(void)memcpy(m.hdr.self.dyn_x, dht->dyn_x, DYN_X_SIZE);
 	if ((m.hdr.self.addr = strdup(dht->addr)) == NULL) {
@@ -49,6 +53,18 @@ send_message(const struct dht *dht, int afd, uint16_t msg_type,
 	}
 	free(m.hdr.self.addr);
 	return 0;
+}
+
+int
+socket_timeout(int fd)
+{
+	struct timeval tv;
+	tv.tv_sec = SOCKET_TIMEOUT_SEC;
+	tv.tv_usec = SOCKET_TIMEOUT_USEC;
+	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == -1) {
+		return -1;
+	}
+	return setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 }
 
 int
@@ -76,14 +92,24 @@ connect_remote(const char *addr, uint16_t port)
 	}
 
 	for (rp = result; rp != NULL; rp = rp->ai_next) {
-		fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+		fd = socket(rp->ai_family, rp->ai_socktype | SOCK_NONBLOCK,
+			rp->ai_protocol);
 		if (fd == -1) {
+			dht_log(LOG_WARNING, "%s", strerror(errno));
 			continue;
 		}
-		if (connect(fd, rp->ai_addr, rp->ai_addrlen) == -1) {
+		if (socket_timeout(fd) == -1) {
+			dht_log(LOG_WARNING, "%s", strerror(errno));
 			(void)close(fd);
 			continue;
 		}
+
+		if (connect_timeout(fd, rp) == -1) {
+			dht_log(LOG_WARNING, "%s", strerror(errno));
+			(void)close(fd);
+			continue;
+		}
+
 		break;
 	}
 
@@ -95,6 +121,47 @@ connect_remote(const char *addr, uint16_t port)
 	}
 
 	return fd;
+}
+
+static int
+connect_timeout(int fd, const struct addrinfo *rp)
+{
+	struct pollfd pfd;
+	int ready, err;
+	socklen_t errsize;
+
+	if (connect(fd, rp->ai_addr, rp->ai_addrlen) == -1) {
+		if (errno == EINPROGRESS || errno == EALREADY) {
+			/* connection is forming */
+			errno = 0;
+		} else {
+			/* TODO: handle EINTR */
+			return -1;
+		}
+	}
+
+	pfd.fd = fd;
+	pfd.events = POLLOUT;
+	ready = poll(&pfd, 1, CONNECT_TIMEOUT);
+	if (ready == -1) {
+		return -1;
+	} else if (ready == 0) {
+		dht_log(LOG_DEBUG, "connect timed out");
+		return -1;
+	}
+
+	errsize = sizeof(err);
+	if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &errsize) == -1) {
+		return -1;
+	}
+	if (err != 0) {
+		/* socket connect failed */
+		errno = err;
+		return -1;
+	}
+
+	/* socket connect succeeded */
+	return 0;
 }
 
 int

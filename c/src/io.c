@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <unistd.h>
 
+#include "dht_internal.h"
 #include "io.h"
 #include "util.h"
 
