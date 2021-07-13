@@ -31,7 +31,7 @@
 #define SOCKET_TIMEOUT_USEC 0
 
 /* Socket timeout waiting for available read/write (ms) */
-#define SOCKET_POLL_TIMEOUT 1000
+#define SOCKET_POLL_TIMEOUT 500
 
 struct dht {
 	uint8_t network_id[NETWORK_ID_SIZE];

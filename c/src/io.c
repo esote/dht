@@ -19,28 +19,38 @@ read2(int fd, void *buf, size_t count)
 	ssize_t offset;
 	ssize_t nn;
 	struct pollfd pfd;
+	int ready;
 
 	bbuf = buf;
 	offset = 0;
 	pfd.fd = fd;
 	pfd.events = POLLIN;
+
 	if (count > SSIZE_MAX) { /* TODO: assign to ssize_t variable */
 		count = SSIZE_MAX;
 	}
 
 	while (count > offset) {
-		nn = read(fd, bbuf + offset, count - (size_t)offset);
-		switch (nn) {
-		case -1:
-			if (errno == EINTR) {
-				errno = 0;
-				continue;
-			} else if (errno == EAGAIN || errno == EWOULDBLOCK) {
-				(void)poll(&pfd, 1, -1);
+		ready = poll(&pfd, 1, SOCKET_POLL_TIMEOUT);
+		if (ready == -1) {
+			if (errno == EAGAIN || errno == EINTR) {
+				dht_log(LOG_DEBUG, "read2 poll interrupted");
 				errno = 0;
 				continue;
 			}
-			/* data may have been read, but shouldn't be trusted */
+			return -1;
+		} else if (ready == 0) {
+			dht_log(LOG_DEBUG, "read2 poll timed out");
+			return -1;
+		}
+
+		nn = read(fd, bbuf + offset, count - (size_t)offset);
+		switch (nn) {
+		case -1:
+			if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+				errno = 0;
+				continue;
+			}
 			return -1;
 		case 0:
 			return offset;
@@ -58,28 +68,39 @@ write2(int fd, const void *buf, size_t count)
 	ssize_t offset;
 	ssize_t nn;
 	struct pollfd pfd;
+	int ready;
 
 	bbuf = buf;
 	offset = 0;
 	pfd.fd = fd;
 	pfd.events = POLLOUT;
+
 	if (count > SSIZE_MAX) { /* TODO: assign to ssize_t variable */
 		count = SSIZE_MAX;
 	}
 
 	while (count > offset) {
-		nn = write(fd, bbuf + offset, count - (size_t)offset);
-		switch (nn) {
-		case -1:
-			if (errno == EINTR) {
-				errno = 0;
-				continue;
-			} else if (errno == EAGAIN || errno == EWOULDBLOCK) {
-				(void)poll(&pfd, 1, -1);
+		ready = poll(&pfd, 1, SOCKET_POLL_TIMEOUT);
+		if (ready == -1) {
+			if (errno == EAGAIN || errno == EINTR) {
+				dht_log(LOG_DEBUG, "write2 poll interrupted");
 				errno = 0;
 				continue;
 			}
-			/* data may have been written, but shouldn't be trusted */
+			return -1;
+		} else if (ready == 0) {
+			dht_log(LOG_DEBUG, "write2 poll timed out");
+			return -1;
+		}
+
+
+		nn = write(fd, bbuf + offset, count - (size_t)offset);
+		switch (nn) {
+		case -1:
+			if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+				errno = 0;
+				continue;
+			}
 			return -1;
 		case 0:
 			return offset;
