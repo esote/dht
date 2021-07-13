@@ -1,15 +1,10 @@
-cleaning up function on error might overwrite errno
 combine lset into map
 lset->list?
 rename all id->publ
 unit test sha3 against example outputs https://csrc.nist.gov/projects/cryptographic-standards-and-guidelines/example-values
 check rpc id during sessions
-logger
 encrypt/write dht publ, priv (enc with pass from config)
 validate config
 need to ignore SIGPIPE?
 *ctx vs *arg naming
 which kbucket and rtable functions are needed
-support dns addresses
-use getaddrinfo for listening/connecting
-wait for child even on error in message_encode/decode
