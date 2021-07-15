@@ -14,29 +14,27 @@
 #include "proto.h"
 #include "util.h"
 
-static int dht_join_listeners(struct dht *dht, size_t i);
+static int copy_config(struct dht *dht, const struct dht_config *config);
+static int ignore_sigpipe(void);
+static int spawn_listeners(struct dht *dht);
+static int join_listeners(struct dht *dht, size_t i);
+static void log_identity(const struct dht *dht);
 
 struct dht *
 dht_new(const struct dht_config *config)
 {
 	struct dht *dht;
-	struct sigaction act;
-	size_t i;
 
 	if ((dht = malloc(sizeof(*dht))) == NULL) {
 		dht_log(LOG_CRIT, "%s", strerror(errno));
 		return NULL;
 	}
 
-	/* Copy config */
-	(void)memcpy(dht->network_id, config->network_id, NETWORK_ID_SIZE);
-	if ((dht->addr = strdup(config->addr)) == NULL) {
+	if (copy_config(dht, config) == -1) {
 		dht_log(LOG_CRIT, "%s", strerror(errno));
 		free(dht);
 		return NULL;
 	}
-	dht->port = config->port;
-	dht->storer = config->storer;
 
 	/* Create node identity */
 	if (new_keypair(dht->id, dht->priv, dht->dyn_x) == -1) {
@@ -45,18 +43,8 @@ dht_new(const struct dht_config *config)
 		free(dht);
 		return NULL;
 	}
-	/* TODO: LOG_DEBUG id */
 
-	/* Ignore SIGPIPE */
-	(void)memset(&act, 0, sizeof(act));
-	if (sigemptyset(&act.sa_mask) == -1) {
-		dht_log(LOG_CRIT, "%s", strerror(errno));
-		free(dht->addr);
-		free(dht);
-		return NULL;
-	}
-	act.sa_handler = SIG_IGN;
-	if (sigaction(SIGPIPE, &act, NULL) == -1) {
+	if (ignore_sigpipe() == -1) {
 		dht_log(LOG_CRIT, "%s", strerror(errno));
 		free(dht->addr);
 		free(dht);
@@ -71,33 +59,78 @@ dht_new(const struct dht_config *config)
 		return NULL;
 	}
 
-	if (sem_init(&dht->listen_exit, 0, 0) == -1) {
+	/* Begin listening for incoming requests */
+	if (spawn_listeners(dht) == -1) {
 		dht_log(LOG_CRIT, "%s", strerror(errno));
 		(void)rtable_close(dht->rtable);
 		free(dht->addr);
 		free(dht);
 		return NULL;
 	}
-	/* Begin listening for incoming requests */
-	for (i = 0; i < LISTENER_COUNT; i++) {
-		errno = pthread_create(&dht->listeners[i], NULL, listener_start,
-			dht);
-		if (errno != 0) {
-			dht_log(LOG_CRIT, "listener[%zu] %s", i, strerror(errno));
-			(void)dht_join_listeners(dht, i);
-			(void)sem_destroy(&dht->listen_exit);
-			(void)rtable_close(dht->rtable);
-			free(dht->addr);
-			free(dht);
-			return NULL;
-		}
-	}
+
+	log_identity(dht);
 
 	return dht;
 }
 
 static int
-dht_join_listeners(struct dht *dht, size_t i)
+copy_config(struct dht *dht, const struct dht_config *config)
+{
+	(void)memcpy(dht->network_id, config->network_id, NETWORK_ID_SIZE);
+
+	if ((dht->addr = strdup(config->addr)) == NULL) {
+		return -1;
+	}
+
+	dht->port = config->port;
+	dht->storer = config->storer;
+
+	return 0;
+}
+
+static int
+ignore_sigpipe(void)
+{
+	struct sigaction act;
+
+	(void)memset(&act, 0, sizeof(act));
+	if (sigemptyset(&act.sa_mask) == -1) {
+		return -1;
+	}
+
+	act.sa_handler = SIG_IGN;
+	if (sigaction(SIGPIPE, &act, NULL) == -1) {
+		return -1;
+	}
+
+	return 0;
+}
+
+static int
+spawn_listeners(struct dht *dht)
+{
+	size_t i;
+
+	if (sem_init(&dht->listen_exit, 0, 0) == -1) {
+		return -1;
+	}
+
+	for (i = 0; i < LISTENER_COUNT; i++) {
+		errno = pthread_create(&dht->listeners[i], NULL, listener_start,
+			dht);
+		if (errno != 0) {
+			dht_log(LOG_ERR, "listen[%zu] %s", i, strerror(errno));
+			(void)join_listeners(dht, i);
+			(void)sem_destroy(&dht->listen_exit);
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+static int
+join_listeners(struct dht *dht, size_t i)
 {
 	int ret;
 	void *listen_ret;
@@ -120,6 +153,17 @@ dht_join_listeners(struct dht *dht, size_t i)
 		}
 	}
 	return ret;
+}
+
+#define NODE_ID_HEX_LEN ((NODE_ID_SIZE)*2+1)
+
+static void
+log_identity(const struct dht *dht)
+{
+	char id[NODE_ID_HEX_LEN];
+	(void)sodium_bin2hex(id, sizeof(id), dht->id, NODE_ID_SIZE);
+	dht_log(LOG_INFO, "ID %s PORT %" PRIu16 " ADDR %s", id, dht->port,
+		dht->addr);
 }
 
 int
@@ -224,7 +268,7 @@ int
 dht_close(struct dht *dht)
 {
 	int ret = 0;
-	if (dht_join_listeners(dht, LISTENER_COUNT) == -1) {
+	if (join_listeners(dht, LISTENER_COUNT) == -1) {
 		dht_log(LOG_CRIT, "%s", strerror(errno));
 		ret = -1;
 	}
