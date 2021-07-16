@@ -1,3 +1,4 @@
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -101,4 +102,10 @@ base64_url_nopad(void *d, const void *s, size_t len)
 	if (remain == 2) {
 		dst[di+2] = url_table[val>>6&0x3F];
 	}
+}
+
+bool
+string_empty(const char *s)
+{
+	return s == NULL || *s == '\0';
 }

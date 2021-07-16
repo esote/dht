@@ -50,13 +50,9 @@ struct dht {
 	struct storer *storer;
 };
 
-int send_message(const struct dht *dht, int afd, uint16_t msg_type,
-	const uint8_t session_id[SESSION_ID_SIZE], const union payload *p,
-	const uint8_t target_id[NODE_ID_SIZE]);
-
 int socket_timeout(int fd);
 int connect_remote(const char *addr, uint16_t port);
 
-int dht_update(struct dht *dht, struct node *target);
+int dht_update(struct dht *dht, const struct node *target);
 
 #endif /* DHT_INTERNAL_H */

@@ -2,7 +2,7 @@ PROG = dht
 
 SRCS = test/dht.c
 SRCS += dht.c
-SRCS += io.c crypto.c proto.c util.c bytes.c kbucket.c rtable.c storer.c listen.c crypto_sha3.c dht_internal.c crypto_stream.c
+SRCS += io.c crypto.c proto.c util.c bytes.c kbucket.c rtable.c storer.c listen.c crypto_sha3.c dht_internal.c crypto_stream.c session.c
 
 FLAGS = -pedantic #-D_POSIX_C_SOURCE=1 -std=c99
 FLAGS += -pthread -lsodium

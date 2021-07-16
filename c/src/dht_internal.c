@@ -13,47 +13,11 @@
 
 #include "dht_internal.h"
 #include "proto.h"
+#include "session.h"
 #include "util.h"
 
 static int connect_timeout(int fd, const struct addrinfo *rp);
 static bool ping_node(const struct node *n, void *arg);
-
-int
-send_message(const struct dht *dht, int afd, uint16_t msg_type,
-	const uint8_t session_id[SESSION_ID_SIZE], const union payload *p,
-	const uint8_t target_id[NODE_ID_SIZE])
-{
-	struct message m;
-	time_t now;
-
-	(void)memcpy(m.hdr.session_id, session_id, SESSION_ID_SIZE);
-	if ((now = time(NULL)) == -1 || now > (INT64_MAX - MSG_EXPIRATION)) {
-		return -1;
-	}
-	m.hdr.expiration = now + MSG_EXPIRATION;
-
-	(void)memcpy(m.hdr.network_id, dht->network_id, NETWORK_ID_SIZE);
-	m.hdr.msg_type = msg_type;
-	(void)memcpy(m.hdr.self.id, dht->id, NODE_ID_SIZE);
-	(void)memcpy(m.hdr.self.dyn_x, dht->dyn_x, DYN_X_SIZE);
-	if ((m.hdr.self.addr = strdup(dht->addr)) == NULL) {
-		/* TODO: if strlen(dht->addr) == 0 null might be right */
-		return -1;
-	}
-	m.hdr.self.port = dht->port;
-
-	if (p == NULL) {
-		(void)memset(&m.payload, 0, sizeof(m.payload));
-	} else {
-		m.payload = *p;
-	}
-	if (message_encode(&m, afd, dht->priv, target_id) == -1) {
-		free(m.hdr.self.addr);
-		return -1;
-	}
-	free(m.hdr.self.addr);
-	return 0;
-}
 
 int
 socket_timeout(int fd)
@@ -165,7 +129,7 @@ connect_timeout(int fd, const struct addrinfo *rp)
 }
 
 int
-dht_update(struct dht *dht, struct node *target)
+dht_update(struct dht *dht, const struct node *target)
 {
 	struct node *replaced;
 	replaced = rtable_replace_oldest(dht->rtable, target, ping_node, dht);
@@ -179,34 +143,40 @@ dht_update(struct dht *dht, struct node *target)
 static bool
 ping_node(const struct node *n, void *arg)
 {
-	struct dht *dht = arg;
-	uint8_t session_id[SESSION_ID_SIZE];
+	struct dht *dht;
+	struct session s;
 	int afd;
 	struct message *msg;
 	bool alive;
 
+	dht = arg;
+
 	if ((afd = connect_remote(n->addr, n->port)) == -1) {
 		return false;
 	}
-	crypto_rand(session_id, SESSION_ID_SIZE);
-	if (send_message(dht, afd, TYPE_PING, session_id, NULL, n->id) == -1) {
-		(void)close(afd);
-		return false;
-	}
-	if ((msg = message_decode(afd, dht->id, dht->priv)) == NULL) {
+
+	session_init(&s, dht, n->id, afd);
+
+	if (session_send(&s, TYPE_PING, NULL) == -1) {
 		(void)close(afd);
 		return false;
 	}
 
-	alive = msg->hdr.msg_type == TYPE_PING
-		&& memcmp(msg->hdr.session_id, session_id, SESSION_ID_SIZE) == 0;
+	if ((msg = session_recv(&s)) == NULL) {
+		(void)close(afd);
+		return false;
+	}
+
+	alive = msg->hdr.msg_type == TYPE_PING;
 
 	if (message_close(msg) == -1) {
 		(void)close(afd);
 		return false;
 	}
+
 	if (close(afd) == -1) {
 		return false;
 	}
+
 	return alive;
 }

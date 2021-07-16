@@ -12,6 +12,7 @@
 #include "dht_internal.h"
 #include "listen.h"
 #include "proto.h"
+#include "session.h"
 #include "util.h"
 
 static int copy_config(struct dht *dht, const struct dht_config *config);
@@ -19,6 +20,7 @@ static int ignore_sigpipe(void);
 static int spawn_listeners(struct dht *dht);
 static int join_listeners(struct dht *dht, size_t i);
 static void log_identity(const struct dht *dht);
+static int bootstrap_response_update(struct dht *dht, const struct message *m);
 
 struct dht *
 dht_new(const struct dht_config *config)
@@ -170,97 +172,78 @@ int
 dht_bootstrap(struct dht *dht, const uint8_t id[NODE_ID_SIZE],
 	const uint8_t dyn_x[DYN_X_SIZE], const char *addr, uint16_t port)
 {
-	uint8_t session_id[SESSION_ID_SIZE];
-	struct node target;
+	int afd;
+	struct session s;
 	union payload p;
 	struct message *msg;
-	size_t i;
-	int afd;
 
-	/* Target node */
-	(void)memcpy(target.id, id, NODE_ID_SIZE);
-	(void)memcpy(target.dyn_x, dyn_x, DYN_X_SIZE);
-	if ((target.addr = strdup(addr)) == NULL) {
+	if ((afd = connect_remote(addr, port)) == -1) {
 		dht_log(LOG_ERR, "%s", strerror(errno));
 		return -1;
 	}
-	target.port = port;
+
+	session_init(&s, dht, id, afd);
 
 	/* Find node request payload */
 	p.fnode.count = K;
 	(void)memcpy(p.fnode.target_id, dht->id, NODE_ID_SIZE);
 	(void)memcpy(p.fnode.target_dyn_x, dht->dyn_x, DYN_X_SIZE);
 
-	if ((afd = connect_remote(addr, port)) == -1) {
-		dht_log(LOG_ERR, "%s", strerror(errno));
-		free(target.addr);
-		return -1;
-	}
-
 	/* Send fnode request */
-	crypto_rand(session_id, SESSION_ID_SIZE);
-	if (send_message(dht, afd, TYPE_FNODE, session_id, &p, id) == -1) {
+	if (session_send(&s, TYPE_FNODE, &p) == -1) {
 		dht_log(LOG_ERR, "%s", strerror(errno));
 		(void)close(afd);
-		free(target.addr);
 		return -1;
 	}
 
-	/* Recv fnode_resp response */
-	if ((msg = message_decode(afd, dht->id, dht->priv)) == NULL) {
+	if ((msg = session_recv(&s)) == NULL) {
 		dht_log(LOG_ERR, "%s", strerror(errno));
 		(void)close(afd);
-		free(target.addr);
 		return -1;
 	}
 	if (msg->hdr.msg_type != TYPE_FNODE_RESP) {
 		dht_log(LOG_ERR, "unexpected msg_type %"PRIu8, msg->hdr.msg_type);
 		(void)message_close(msg);
 		(void)close(afd);
-		free(target.addr);
-		return -1;
-	}
-	if (memcmp(msg->hdr.session_id, session_id, SESSION_ID_SIZE) != 0) {
-		dht_log(LOG_ERR, "unexpected session ID");
-		(void)message_close(msg);
-		(void)close(afd);
-		free(target.addr);
 		return -1;
 	}
 
-	/* Target node is alive, update rtable */
-	if (dht_update(dht, &target) == -1) {
+	if (bootstrap_response_update(dht, msg) == -1) {
 		dht_log(LOG_ERR, "%s", strerror(errno));
 		(void)message_close(msg);
 		(void)close(afd);
-		free(target.addr);
 		return -1;
-	}
-
-	/* Update rtable with nodes returned by target */
-	for (i = 0; i < msg->payload.fnode_resp.count && i < K; i++) {
-		if (dht_update(dht, &msg->payload.fnode_resp.nodes[i]) == -1) {
-			dht_log(LOG_ERR, "update[%zu] %s", i, strerror(errno));
-			(void)message_close(msg);
-			(void)close(afd);
-			free(target.addr);
-			return -1;
-		}
 	}
 
 	if (message_close(msg) == -1) {
 		dht_log(LOG_ERR, "%s", strerror(errno));
 		(void)close(afd);
-		free(target.addr);
 		return -1;
 	}
 	if (close(afd) == -1) {
 		dht_log(LOG_ERR, "%s", strerror(errno));
-		free(target.addr);
 		return -1;
 	}
 
-	free(target.addr);
+	return 0;
+}
+
+static int
+bootstrap_response_update(struct dht *dht, const struct message *m)
+{
+	size_t i;
+
+	if (dht_update(dht, &m->hdr.self) == -1) {
+		return -1;
+	}
+
+	for (i = 0; i < m->payload.fnode_resp.count && i < K; i++) {
+		if (dht_update(dht, &m->payload.fnode_resp.nodes[i]) == -1) {
+			dht_log(LOG_ERR, "update[%zu] %s", i, strerror(errno));
+			return -1;
+		}
+	}
+
 	return 0;
 }
 

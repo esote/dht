@@ -19,6 +19,7 @@
 #include "listen.h"
 #include "proto.h"
 #include "rtable.h"
+#include "session.h"
 #include "storer.h"
 #include "util.h"
 
@@ -29,14 +30,17 @@ static int listen_net(uint16_t port);
 static int socket_reuse(int fd);
 static int listener_work(struct dht *dht, int afd);
 static bool listener_should_exit(struct dht *dht);
-static int respond_msg(struct dht *dht, int afd, const struct message *msg);
-static int respond_ping(const struct dht *dht, int afd, const struct message *msg);
-static int respond_data(struct dht *dht, int afd, const struct message *msg);
-static int respond_fnode(const struct dht *dht, int afd, const struct message *msg);
-static int send_fnode_closest(const struct dht *dht, int afd,
-	const uint8_t id[NODE_ID_SIZE], size_t k, const uint8_t session_id[SESSION_ID_SIZE],
-	const uint8_t target[NODE_ID_SIZE]);
-static int respond_fval(const struct dht *dht, int afd, const struct message *req);
+static int respond_msg(struct dht *dht, struct session *s,
+	const struct message *msg);
+static int respond_ping(struct session *s);
+static int respond_data(struct dht *dht, struct session *s,
+	const struct message *msg);
+static int respond_fnode(const struct dht *dht, struct session *s,
+	const struct message *msg);
+static int send_fnode_closest(const struct dht *dht, struct session *s,
+	const uint8_t id[NODE_ID_SIZE], size_t k);
+static int respond_fval(const struct dht *dht, struct session *s,
+	const struct message *msg);
 
 static int listen_success = 0;
 
@@ -211,110 +215,121 @@ listener_should_exit(struct dht *dht)
 static int
 listener_work(struct dht *dht, int afd)
 {
+	struct session s;
 	struct message *msg;
 	struct node target;
 
-	if ((msg = message_decode(afd, dht->id, dht->priv)) == NULL) {
+	session_init(&s, dht, NULL, afd);
+
+	if ((msg = session_recv(&s)) == NULL) {
 		return -1;
 	}
-	if (respond_msg(dht, afd, msg) == -1) {
+
+	if (respond_msg(dht, &s, msg) == -1) {
 		(void)message_close(msg);
 		return -1;
 	}
+
 	(void)memcpy(target.id, msg->hdr.self.id, NODE_ID_SIZE);
 	(void)memcpy(target.dyn_x, msg->hdr.self.dyn_x, DYN_X_SIZE);
 	target.addr = msg->hdr.self.addr;
 	target.port = msg->hdr.self.port;
+
 	if (dht_update(dht, &target) == -1) {
 		(void)message_close(msg);
 		return -1;
 	}
+
 	return message_close(msg);
 }
 
 static int
-respond_msg(struct dht *dht, int afd, const struct message *msg)
+respond_msg(struct dht *dht, struct session *s, const struct message *msg)
 {
 	switch (msg->hdr.msg_type) {
 	case TYPE_PING:
-		return respond_ping(dht, afd, msg);
+		return respond_ping(s);
 	case TYPE_DATA:
-		return respond_data(dht, afd, msg);
+		return respond_data(dht, s, msg);
 	case TYPE_FNODE:
-		return respond_fnode(dht, afd, msg);
+		return respond_fnode(dht, s, msg);
 	case TYPE_FVAL:
-		return respond_fval(dht, afd, msg);
+		return respond_fval(dht, s, msg);
 	default:
 		return -1;
 	}
 }
 
 static int
-respond_ping(const struct dht *dht, int afd, const struct message *msg)
+respond_ping(struct session *s)
 {
-	return send_message(dht, afd, TYPE_PING, msg->hdr.session_id, NULL,
-		msg->hdr.self.id);
+	return session_send(s, TYPE_PING, NULL);
 }
 
 static int
-respond_data(struct dht *dht, int afd, const struct message *msg)
+respond_data(struct dht *dht, struct session *s, const struct message *msg)
 {
 	if (storer_store(dht->storer, msg->payload.data.key, KEY_SIZE,
 		msg->payload.data.value, msg->payload.data.length) == -1) {
 		return -1;
 	}
-	return send_message(dht, afd, TYPE_PING, msg->hdr.session_id, NULL,
-		msg->hdr.self.id);
+
+	return session_send(s, TYPE_PING, NULL);
 }
 
 static int
-respond_fnode(const struct dht *dht, int afd, const struct message *msg)
+respond_fnode(const struct dht *dht, struct session *s, const struct message *msg)
 {
-	return send_fnode_closest(dht, afd, msg->payload.fnode.target_id,
-		msg->payload.fnode.count, msg->hdr.session_id, msg->hdr.self.id);
+	return send_fnode_closest(dht, s, msg->payload.fnode.target_id,
+		msg->payload.fnode.count);
 }
 
 static int
-send_fnode_closest(const struct dht *dht, int afd, const uint8_t id[NODE_ID_SIZE],
-	size_t k, const uint8_t session_id[SESSION_ID_SIZE], const uint8_t target[NODE_ID_SIZE])
+send_fnode_closest(const struct dht *dht, struct session *s,
+	const uint8_t id[NODE_ID_SIZE], size_t k)
 {
 	size_t len;
 	struct node *closest;
 	union payload p;
-	int ret;
 
 	if (k > K) {
 		k = K;
 	} else if (k == 0) {
 		return -1;
 	}
+
 	if (rtable_closest(dht->rtable, id, k, &closest, &len) == -1) {
 		return -1;
 	}
 	assert(len <= UINT8_MAX);
+
 	p.fnode_resp.count = (uint8_t)len;
 	p.fnode_resp.nodes = closest;
-	ret = send_message(dht, afd, TYPE_FNODE_RESP, session_id, &p, target);
+
+	if (session_send(s, TYPE_FNODE_RESP, &p) == -1) {
+		free(closest);
+		return -1;
+	}
+
 	free(closest);
-	return ret;
+	return 0;
 }
 
 static int
-respond_fval(const struct dht *dht, int afd, const struct message *req)
+respond_fval(const struct dht *dht, struct session *s, const struct message *msg)
 {
 	union payload p;
-	int value;
-	size_t value_length;
 
-	if ((value = storer_load(dht->storer, req->payload.fval.key, KEY_SIZE,
-		&value_length)) == -1) {
-		return send_fnode_closest(dht, afd, req->payload.fval.key, K,
-			req->hdr.session_id, req->hdr.self.id);
+	p.data.value = storer_load(dht->storer, msg->payload.fval.key, KEY_SIZE,
+		&p.data.length);
+	if (p.data.value == -1) {
+		return send_fnode_closest(dht, s, msg->payload.fval.key, K);
 	}
-	p.data.length = value_length;
-	p.data.value = value;
-	if (send_message(dht, afd, TYPE_DATA, req->hdr.session_id, &p, req->hdr.self.id) == -1) {
-		(void)close(value);
+
+	if (session_send(s, TYPE_DATA, &p) == -1) {
+		(void)close(p.data.value);
+		return -1;
 	}
-	return close(value);
+
+	return close(p.data.value);
 }
