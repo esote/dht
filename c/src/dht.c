@@ -137,15 +137,19 @@ join_listeners(struct dht *dht, size_t i)
 	int ret;
 	void *listen_ret;
 	size_t j;
+
 	ret = 0;
+
 	for (j = 0; j < i; j++) {
 		assert(sem_post(&dht->listen_exit) == 0);
 	}
+
 	for (j = 0; j < i; j++) {
 		if ((errno = pthread_join(dht->listeners[j], &listen_ret)) != 0) {
 			dht_log(LOG_ERR, "join[%zu] %s", j, strerror(errno));
 			ret = -1;
 		}
+
 		if (listen_ret == NULL) {
 			dht_log(LOG_ERR, "join[%zu] returned NULL", j);
 			ret = -1;
@@ -154,16 +158,17 @@ join_listeners(struct dht *dht, size_t i)
 			ret = -1;
 		}
 	}
+
 	return ret;
 }
-
-#define NODE_ID_HEX_LEN ((NODE_ID_SIZE)*2+1)
 
 static void
 log_identity(const struct dht *dht)
 {
-	char id[NODE_ID_HEX_LEN];
+	char id[NODE_ID_SIZE*2 + 1];
+
 	(void)sodium_bin2hex(id, sizeof(id), dht->id, NODE_ID_SIZE);
+
 	dht_log(LOG_INFO, "ID %s PORT %" PRIu16 " ADDR %s", id, dht->port,
 		dht->addr);
 }
@@ -251,18 +256,22 @@ int
 dht_close(struct dht *dht)
 {
 	int ret = 0;
+
 	if (join_listeners(dht, LISTENER_COUNT) == -1) {
 		dht_log(LOG_CRIT, "%s", strerror(errno));
 		ret = -1;
 	}
+
 	if (sem_destroy(&dht->listen_exit) == -1) {
 		dht_log(LOG_CRIT, "%s", strerror(errno));
 		ret = -1;
 	}
+
 	if (rtable_close(dht->rtable) == -1) {
 		dht_log(LOG_CRIT, "%s", strerror(errno));
 		ret = -1;
 	}
+
 	free(dht->addr);
 	free(dht);
 	return ret;
