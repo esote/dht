@@ -8,6 +8,7 @@
 #include "../dht.h"
 #include "../dht_internal.h"
 #include "../storer.h"
+#include "../util.h"
 
 int
 main(int argc, char *argv[])
@@ -37,7 +38,7 @@ main(int argc, char *argv[])
 	uint16_t port = (uint16_t)strtol(argv[3], NULL, 10);
 
 	uint8_t id[NODE_ID_SIZE];
-	sodium_hex2bin(id, NODE_ID_SIZE, argv[4], strlen(argv[4]), NULL, NULL, NULL);
+	assert(hex2bin(id, NODE_ID_SIZE, argv[4], strlen(argv[4])) != -1);
 	int ret = dht_bootstrap(dht, id, dht->dyn_x, dht->addr, port);
 	assert(ret != -1);
 	assert(dht_close(dht) != -1);

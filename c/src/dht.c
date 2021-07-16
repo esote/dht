@@ -167,8 +167,7 @@ log_identity(const struct dht *dht)
 {
 	char id[NODE_ID_SIZE*2 + 1];
 
-	(void)sodium_bin2hex(id, sizeof(id), dht->id, NODE_ID_SIZE);
-
+	bin2hex(id, sizeof(id), dht->id, NODE_ID_SIZE);
 	dht_log(LOG_INFO, "ID %s PORT %" PRIu16 " ADDR %s", id, dht->port,
 		dht->addr);
 }

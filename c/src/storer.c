@@ -180,13 +180,12 @@ encode_key(const struct storer *s, const uint8_t *key, size_t key_length)
 {
 	/* dir + '/' + encoded key + '\0' */
 	char *file;
-	if ((file = malloc(s->dir_length + 1 + base64_url_nopad_len(key_length) + 1)) == NULL) {
+	if ((file = malloc(s->dir_length + 1 + (key_length*2) + 1)) == NULL) {
 		return NULL;
 	}
 	(void)memcpy(file, s->dir, s->dir_length);
 	file[s->dir_length] = '/';
-	base64_url_nopad(file + s->dir_length + 1, key, key_length);
-	file[s->dir_length + 1 + base64_url_nopad_len(key_length)] = '\0';
+	bin2hex(file + s->dir_length + 1, key_length*2 + 1, key, key_length);
 	return file;
 }
 

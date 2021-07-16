@@ -11,8 +11,10 @@
 size_t min(size_t x, size_t y);
 char *strdup(const char *str);
 char *join_path_file(const char *path, const char *file);
-size_t base64_url_nopad_len(size_t len);
-void base64_url_nopad(void *d, const void *s, size_t len);
+void bin2hex(char *const hex, const size_t hex_maxlen, const void *bin,
+	const size_t bin_len);
+int hex2bin(void *const bin, const size_t bin_maxlen, const char *const hex,
+	const size_t hex_len);
 bool string_empty(const char *s);
 
 #endif /* DHT_UTIL_H */
