@@ -40,7 +40,6 @@ connect_remote(const char *addr, uint16_t port)
 	int fd;
 	struct addrinfo hints;
 	struct addrinfo *result, *rp;
-	char str_port[6];
 	int n;
 
 	(void)memset(&hints, 0, sizeof(hints));
@@ -49,11 +48,7 @@ connect_remote(const char *addr, uint16_t port)
 	hints.ai_flags = 0;
 	hints.ai_protocol = 0;
 
-	/* TODO: cleaner way? */
-	n = snprintf(str_port, sizeof(str_port), "%" PRIu16, port);
-	assert(n >= 0 && n < sizeof(str_port));
-
-	if (getaddrinfo(addr, str_port, &hints, &result) != 0) {
+	if ((n = getaddrinfo_port(addr, port, &hints, &result)) != 0) {
 		dht_log(LOG_ERR, "%s", gai_strerror(n));
 		return -1;
 	}
@@ -134,6 +129,22 @@ connect_timeout(int fd, const struct addrinfo *rp)
 	}
 
 	return 0;
+}
+
+int
+getaddrinfo_port(const char *node, uint16_t port, const struct addrinfo *hints,
+	struct addrinfo **res)
+{
+#define SERVICE_LEN (5+1)
+	char service[SERVICE_LEN];
+	int n;
+
+	n = snprintf(service, sizeof(service), "%"PRIu16, port);
+	if (n < 0 || n >= sizeof(service)) {
+		return EAI_NONAME;
+	}
+
+	return getaddrinfo(node, service, hints, res);
 }
 
 int

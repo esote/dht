@@ -1,11 +1,14 @@
 #ifndef DHT_INTERNAL_H
 #define DHT_INTERNAL_H
 
+#include <netdb.h>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <semaphore.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <sys/socket.h>
+#include <sys/types.h>
 #include <time.h>
 
 #include "proto.h"
@@ -52,6 +55,8 @@ struct dht {
 
 int socket_timeout(int fd);
 int connect_remote(const char *addr, uint16_t port);
+int getaddrinfo_port(const char *node, uint16_t port,
+	const struct addrinfo *hints, struct addrinfo **res);
 
 int dht_update(struct dht *dht, const struct node *target);
 

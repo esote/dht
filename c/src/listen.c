@@ -38,7 +38,7 @@ static int respond_data(struct dht *dht, struct session *s,
 static int respond_fnode(const struct dht *dht, struct session *s,
 	const struct message *msg);
 static int send_fnode_closest(const struct dht *dht, struct session *s,
-	const uint8_t id[NODE_ID_SIZE], size_t k);
+	const uint8_t id[NODE_ID_SIZE], uint8_t k);
 static int respond_fval(const struct dht *dht, struct session *s,
 	const struct message *msg);
 
@@ -51,19 +51,23 @@ listener_start(void *arg)
 	int sfd;
 
 	dht = arg;
+
 	if ((sfd = listen_net(dht->port)) == -1) {
 		dht_log(LOG_ERR, "%s", strerror(errno));
 		return NULL;
 	}
+
 	if (listener_accept(dht, sfd) == -1) {
 		dht_log(LOG_ERR, "%s", strerror(errno));
 		(void)close(sfd);
 		return NULL;
 	}
+
 	if (close(sfd) == -1) {
 		dht_log(LOG_ERR, "%s", strerror(errno));
 		return NULL;
 	}
+
 	return &listen_success;
 }
 
@@ -73,7 +77,6 @@ listen_net(uint16_t port)
 	int fd;
 	struct addrinfo hints;
 	struct addrinfo *result, *rp;
-	char str_port[6];
 	int n;
 
 	(void)memset(&hints, 0, sizeof(hints));
@@ -82,10 +85,7 @@ listen_net(uint16_t port)
 	hints.ai_flags = 0;
 	hints.ai_protocol = 0;
 
-	n = snprintf(str_port, sizeof(str_port), "%" PRIu16, port);
-	assert(n >= 0 && n < sizeof(str_port));
-
-	if ((n = getaddrinfo(NULL, str_port, &hints, &result)) != 0) {
+	if ((n = getaddrinfo_port(NULL, port, &hints, &result)) != 0) {
 		dht_log(LOG_ERR, "%s", gai_strerror(n));
 		return -1;
 	}
@@ -97,26 +97,31 @@ listen_net(uint16_t port)
 			dht_log(LOG_WARNING, "%s", strerror(errno));
 			continue;
 		}
+
 		if (socket_timeout(fd) == -1) {
 			dht_log(LOG_WARNING, "%s", strerror(errno));
 			(void)close(fd);
 			continue;
 		}
+
 		if (socket_reuse(fd) == -1) {
 			dht_log(LOG_WARNING, "%s", strerror(errno));
 			(void)close(fd);
 			continue;
 		}
+
 		if (bind(fd, rp->ai_addr, rp->ai_addrlen) == -1) {
 			dht_log(LOG_WARNING, "%s", strerror(errno));
 			(void)close(fd);
 			continue;
 		}
+
 		if (listen(fd, LISTEN_BACKLOG) == -1) {
 			dht_log(LOG_WARNING, "%s", strerror(errno));
 			(void)close(fd);
 			continue;
 		}
+
 		break;
 	}
 
@@ -134,9 +139,11 @@ static int
 socket_reuse(int fd)
 {
 	int opt = 1;
+
 	if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt)) == -1) {
 		return -1;
 	}
+
 	return setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 }
 
@@ -176,14 +183,17 @@ listener_accept(struct dht *dht, int sfd)
 			dht_log(LOG_ERR, "%s", strerror(errno));
 			return -1;
 		}
+
 		if (socket_timeout(afd) == -1) {
-			dht_log(LOG_WARNING, "%s", strerror(errno));
+			dht_log(LOG_ERR, "%s", strerror(errno));
 			(void)close(afd);
-			continue;
+			return -1;
 		}
+
 		if (listener_work(dht, afd) == -1) {
 			dht_log(LOG_WARNING, "%s", strerror(errno));
 		}
+
 		if (close(afd) == -1) {
 			dht_log(LOG_ERR, "%s", strerror(errno));
 			return -1;
@@ -217,7 +227,6 @@ listener_work(struct dht *dht, int afd)
 {
 	struct session s;
 	struct message *msg;
-	struct node target;
 
 	session_init(&s, dht, NULL, afd);
 
@@ -230,12 +239,7 @@ listener_work(struct dht *dht, int afd)
 		return -1;
 	}
 
-	(void)memcpy(target.id, msg->hdr.self.id, NODE_ID_SIZE);
-	(void)memcpy(target.dyn_x, msg->hdr.self.dyn_x, DYN_X_SIZE);
-	target.addr = msg->hdr.self.addr;
-	target.port = msg->hdr.self.port;
-
-	if (dht_update(dht, &target) == -1) {
+	if (dht_update(dht, &msg->hdr.self) == -1) {
 		(void)message_close(msg);
 		return -1;
 	}
@@ -286,7 +290,7 @@ respond_fnode(const struct dht *dht, struct session *s, const struct message *ms
 
 static int
 send_fnode_closest(const struct dht *dht, struct session *s,
-	const uint8_t id[NODE_ID_SIZE], size_t k)
+	const uint8_t id[NODE_ID_SIZE], uint8_t k)
 {
 	size_t len;
 	struct node *closest;
@@ -301,8 +305,8 @@ send_fnode_closest(const struct dht *dht, struct session *s,
 	if (rtable_closest(dht->rtable, id, k, &closest, &len) == -1) {
 		return -1;
 	}
-	assert(len <= UINT8_MAX);
 
+	assert(len <= UINT8_MAX);
 	p.fnode_resp.count = (uint8_t)len;
 	p.fnode_resp.nodes = closest;
 
