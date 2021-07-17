@@ -23,11 +23,14 @@ int
 socket_timeout(int fd)
 {
 	struct timeval tv;
+
 	tv.tv_sec = SOCKET_TIMEOUT_SEC;
 	tv.tv_usec = SOCKET_TIMEOUT_USEC;
+
 	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == -1) {
 		return -1;
 	}
+
 	return setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 }
 
@@ -51,7 +54,7 @@ connect_remote(const char *addr, uint16_t port)
 	assert(n >= 0 && n < sizeof(str_port));
 
 	if (getaddrinfo(addr, str_port, &hints, &result) != 0) {
-		/*  TODO: print return value, retry? */
+		dht_log(LOG_ERR, "%s", gai_strerror(n));
 		return -1;
 	}
 
@@ -62,6 +65,7 @@ connect_remote(const char *addr, uint16_t port)
 			dht_log(LOG_WARNING, "%s", strerror(errno));
 			continue;
 		}
+
 		if (socket_timeout(fd) == -1) {
 			dht_log(LOG_WARNING, "%s", strerror(errno));
 			(void)close(fd);
@@ -94,18 +98,23 @@ connect_timeout(int fd, const struct addrinfo *rp)
 	int err;
 	socklen_t errsize;
 
-	if (connect(fd, rp->ai_addr, rp->ai_addrlen) == -1) {
-		if (errno == EINPROGRESS || errno == EALREADY) {
+	while (connect(fd, rp->ai_addr, rp->ai_addrlen) == -1) {
+		switch (errno) {
+		case EINPROGRESS:
+		case EALREADY:
 			/* connection is forming */
 			errno = 0;
-		} else {
-			/* TODO: handle EINTR */
+			break;
+		case EINTR:
+			continue;
+		default:
 			return -1;
 		}
 	}
 
 	pfd.fd = fd;
 	pfd.events = POLLOUT;
+
 	switch (poll(&pfd, 1, CONNECT_TIMEOUT)) {
 	case -1:
 		return -1;
@@ -124,7 +133,6 @@ connect_timeout(int fd, const struct addrinfo *rp)
 		return -1;
 	}
 
-	/* socket connect succeeded */
 	return 0;
 }
 
