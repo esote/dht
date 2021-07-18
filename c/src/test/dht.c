@@ -32,7 +32,10 @@ main(int argc, char *argv[])
 	assert(dht != NULL);
 
 	if (argc < 5) {
-		for (;;) { pause(); }
+		sleep(60);
+		assert(dht_close(dht) != -1);
+		assert(storer_free(config.storer) != -1);
+		return 0;
 	}
 
 	uint16_t port = (uint16_t)strtol(argv[3], NULL, 10);

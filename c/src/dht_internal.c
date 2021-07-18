@@ -13,11 +13,11 @@
 
 #include "dht_internal.h"
 #include "proto.h"
+#include "rtable.h"
 #include "session.h"
 #include "util.h"
 
 static int connect_timeout(int fd, const struct addrinfo *rp);
-static bool ping_node(const struct node *n, void *arg);
 
 int
 socket_timeout(int fd)
@@ -150,16 +150,11 @@ getaddrinfo_port(const char *node, uint16_t port, const struct addrinfo *hints,
 int
 dht_update(struct dht *dht, const struct node *target)
 {
-	struct node *replaced;
-	replaced = rtable_replace_oldest(dht->rtable, target, ping_node, dht);
-	if (replaced != NULL) {
-		free(replaced);
-	}
-	return 0;
+	return rtable_store(dht->rtable, target);
 }
 
 /* TODO: differentiate between internal error and remote error? */
-static bool
+bool
 ping_node(const struct node *n, void *arg)
 {
 	struct dht *dht;

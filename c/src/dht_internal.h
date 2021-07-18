@@ -59,5 +59,6 @@ int getaddrinfo_port(const char *node, uint16_t port,
 	const struct addrinfo *hints, struct addrinfo **res);
 
 int dht_update(struct dht *dht, const struct node *target);
+bool ping_node(const struct node *n, void *arg);
 
 #endif /* DHT_INTERNAL_H */

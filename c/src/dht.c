@@ -54,7 +54,7 @@ dht_new(const struct dht_config *config)
 	}
 
 	/* Initialize routing table */
-	if ((dht->rtable = rtable_new(dht->id, K)) == NULL) {
+	if ((dht->rtable = rtable_new(dht->id, ping_node, dht, K)) == NULL) {
 		dht_log(LOG_CRIT, "%s", strerror(errno));
 		free(dht->addr);
 		free(dht);
