@@ -11,8 +11,13 @@
 #include "io.h"
 #include "util.h"
 
-#define C1 13 /* 23 */
-#define C2 14 /* 24 */
+#ifndef C1
+#define C1 23
+#endif /* C1 */
+
+#ifndef C2
+#define C2 24
+#endif /* C1 */
 
 static int new_keypair_static(unsigned char publ[PUBL_SIZE],
 	unsigned char priv[PRIV_SIZE]);

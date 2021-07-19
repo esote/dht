@@ -1,20 +1,18 @@
 PROG = dht
-
 SRCS = test/dht.c
-SRCS += dht.c
-SRCS += io.c crypto.c proto.c util.c bytes.c bucket.c rtable.c storer.c listen.c crypto_sha3.c dht_internal.c crypto_stream.c session.c
-
-FLAGS = -pedantic #-D_POSIX_C_SOURCE=1 -std=c99
-FLAGS += -pthread -lsodium
-FLAGS += -Wall \
-	-Wshadow -Wpointer-arith -Wcast-qual -Wcast-align \
+SRCS += bucket.c bytes.c crypto.c crypto_sha3.c crypto_stream.c dht.c \
+	dht_internal.c io.c listen.c proto.c rtable.c session.c storer.c util.c
+FLAGS = -pthread -lsodium \
+	-pedantic -Wall -Wshadow -Wpointer-arith -Wcast-qual -Wcast-align \
 	-Wstrict-prototypes -Wmissing-prototypes -Wconversion
+BUILD_FLAGS = -O2
+DEBUG_FLAGS = -fsanitize=thread -fPIE -pie -g
 
 build: $(SRCS)
-	$(CC) -fsanitize=thread -fPIE -pie -g $(FLAGS) -o $(PROG).out $(SRCS)
+	$(CC) $(FLAGS) $(BUILD_FLAGS) -o $(PROG).out $(SRCS)
 
-valgrind: $(PROG).out
-	valgrind --child-silent-after-fork=yes ./$(PROG).out $(ARGS)
+debug: $(SRCS)
+	$(CC) $(FLAGS) $(DEBUG_FLAGS) -DC1=2 -DC2=3 -o $(PROG).out $(SRCS)
 
 clean:
 	rm -f $(PROG).out
