@@ -13,6 +13,9 @@ static int bucket_store_node(struct bucket *b, const struct node *n);
 static const struct node *bucket_oldest(const struct bucket *b);
 static int bucket_remove(struct bucket *b, const uint8_t id[NODE_ID_SIZE]);
 static int copy_node(struct node *dst, const struct node *src);
+static int bucket_store_inner(struct bucket *b, const struct node *n);
+static int bucket_append_inner(struct bucket *b, struct node **s, size_t *len,
+	size_t n);
 
 int
 bucket_init(struct bucket *b, bool (*alive)(const struct node *n, void *arg),
@@ -59,6 +62,20 @@ bucket_close(struct bucket *b)
 int
 bucket_store(struct bucket *b, const struct node *n)
 {
+	assert(pthread_rwlock_wrlock(&b->mu) == 0);
+
+	if (bucket_store_inner(b, n) == -1) {
+		assert(pthread_rwlock_unlock(&b->mu) == 0);
+		return -1;
+	}
+
+	assert(pthread_rwlock_unlock(&b->mu) == 0);
+	return 0;
+}
+
+static int
+bucket_store_inner(struct bucket *b, const struct node *n)
+{
 	const struct node *oldest;
 
 	if (bucket_store_node(b, n) != -1) {
@@ -90,6 +107,20 @@ bucket_store(struct bucket *b, const struct node *n)
 
 int
 bucket_append(struct bucket *b, struct node **s, size_t *len, size_t n)
+{
+	assert(pthread_rwlock_rdlock(&b->mu) == 0);
+
+	if (bucket_append_inner(b, s, len, n) == -1) {
+		assert(pthread_rwlock_unlock(&b->mu) == 0);
+		return -1;
+	}
+
+	assert(pthread_rwlock_unlock(&b->mu) == 0);
+	return 0;
+}
+
+static int
+bucket_append_inner(struct bucket *b, struct node **s, size_t *len, size_t n)
 {
 	size_t i, j;
 	struct node *tmp;
