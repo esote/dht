@@ -173,6 +173,31 @@ log_identity(const struct dht *dht)
 }
 
 int
+dht_close(struct dht *dht)
+{
+	int ret = 0;
+
+	if (join_listeners(dht, LISTENER_COUNT) == -1) {
+		dht_log(LOG_CRIT, "%s", strerror(errno));
+		ret = -1;
+	}
+
+	if (sem_destroy(&dht->listen_exit) == -1) {
+		dht_log(LOG_CRIT, "%s", strerror(errno));
+		ret = -1;
+	}
+
+	if (rtable_close(dht->rtable) == -1) {
+		dht_log(LOG_CRIT, "%s", strerror(errno));
+		ret = -1;
+	}
+
+	free(dht->addr);
+	free(dht);
+	return ret;
+}
+
+int
 dht_bootstrap(struct dht *dht, const uint8_t id[NODE_ID_SIZE],
 	const uint8_t dyn_x[DYN_X_SIZE], const char *addr, uint16_t port)
 {
@@ -249,29 +274,4 @@ bootstrap_response_update(struct dht *dht, const struct message *m)
 	}
 
 	return 0;
-}
-
-int
-dht_close(struct dht *dht)
-{
-	int ret = 0;
-
-	if (join_listeners(dht, LISTENER_COUNT) == -1) {
-		dht_log(LOG_CRIT, "%s", strerror(errno));
-		ret = -1;
-	}
-
-	if (sem_destroy(&dht->listen_exit) == -1) {
-		dht_log(LOG_CRIT, "%s", strerror(errno));
-		ret = -1;
-	}
-
-	if (rtable_close(dht->rtable) == -1) {
-		dht_log(LOG_CRIT, "%s", strerror(errno));
-		ret = -1;
-	}
-
-	free(dht->addr);
-	free(dht);
-	return ret;
 }
