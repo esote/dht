@@ -42,14 +42,14 @@ session_send(struct session *s, uint16_t msg_type, const union payload *p)
 
 	(void)memcpy(m.hdr.network_id, s->dht->network_id, NETWORK_ID_SIZE);
 	m.hdr.msg_type = msg_type;
-	(void)memcpy(m.hdr.self.id, s->dht->id, NODE_ID_SIZE);
-	(void)memcpy(m.hdr.self.dyn_x, s->dht->dyn_x, DYN_X_SIZE);
+	(void)memcpy(m.hdr.node.id, s->dht->id, NODE_ID_SIZE);
+	(void)memcpy(m.hdr.node.dyn_x, s->dht->dyn_x, DYN_X_SIZE);
 	if (string_empty(s->dht->addr)) {
-		m.hdr.self.addr = NULL;
-	} else if ((m.hdr.self.addr = strdup(s->dht->addr)) == NULL) {
+		m.hdr.node.addr = NULL;
+	} else if ((m.hdr.node.addr = strdup(s->dht->addr)) == NULL) {
 		return -1;
 	}
-	m.hdr.self.port = s->dht->port;
+	m.hdr.node.port = s->dht->port;
 
 	if (p == NULL) {
 		(void)memset(&m.payload, 0, sizeof(m.payload));
@@ -58,11 +58,11 @@ session_send(struct session *s, uint16_t msg_type, const union payload *p)
 	}
 
 	if (message_encode(&m, s->fd, s->dht->priv, s->target_id) == -1) {
-		free(m.hdr.self.addr);
+		free(m.hdr.node.addr);
 		return -1;
 	}
 
-	free(m.hdr.self.addr);
+	free(m.hdr.node.addr);
 	return 0;
 }
 
@@ -76,7 +76,7 @@ session_recv(struct session *s)
 	}
 
 	if (!s->set) {
-		(void)memcpy(s->target_id, m->hdr.self.id, NODE_ID_SIZE);
+		(void)memcpy(s->target_id, m->hdr.node.id, NODE_ID_SIZE);
 		(void)memcpy(s->session_id, m->hdr.session_id, SESSION_ID_SIZE);
 		s->set = true;
 	} else if (memcmp(m->hdr.session_id, s->session_id, SESSION_ID_SIZE) != 0) {

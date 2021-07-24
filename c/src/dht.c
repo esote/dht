@@ -262,7 +262,7 @@ bootstrap_response_update(struct dht *dht, const struct message *m)
 {
 	size_t i;
 
-	if (dht_update(dht, &m->hdr.self) == -1) {
+	if (dht_update(dht, &m->hdr.node) == -1) {
 		return -1;
 	}
 

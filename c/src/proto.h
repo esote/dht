@@ -64,7 +64,7 @@ struct header {
 	time_t expiration;
 	uint8_t network_id[NETWORK_ID_SIZE];
 	uint16_t msg_type;
-	struct node self;
+	struct node node;
 };
 
 struct message {

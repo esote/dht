@@ -116,7 +116,7 @@ message_decode(int in, const unsigned char publ[PUBL_SIZE],
 	}
 	m->_child = -1;
 	m->hdr.msg_type = TYPE_PING;
-	m->hdr.self.addr = NULL;
+	m->hdr.node.addr = NULL;
 
 	/* get output fd to decrypt body */
 	if ((child = decrypt(in, &out, publ, priv)) == -1) {
@@ -171,7 +171,7 @@ message_close(struct message *m)
 	if (m->_child != -1 && kill(m->_child, SIGKILL) == -1) {
 		ret = -1;
 	}
-	free_node(&m->hdr.self);
+	free_node(&m->hdr.node);
 	free(m);
 	return ret;
 }
@@ -253,12 +253,12 @@ length_node(const struct node *n, size_t *len)
 static int
 length_header(const struct header *hdr, size_t *len)
 {
-	size_t self;
-	if (length_node(&hdr->self, &self) == -1) {
+	size_t node;
+	if (length_node(&hdr->node, &node) == -1) {
 		return -1;
 	}
 	*len = sizeof(uint16_t) + SESSION_ID_SIZE + sizeof(uint64_t) + SIG_SIZE
-		+ NETWORK_ID_SIZE + sizeof(uint16_t) + self;
+		+ NETWORK_ID_SIZE + sizeof(uint16_t) + node;
 	return 0;
 }
 
@@ -425,7 +425,7 @@ write_header(const struct header *hdr, int out,
 		return -1;
 	}
 
-	if (write_node(&hdr->self, out) == -1) {
+	if (write_node(&hdr->node, out) == -1) {
 		return -1;
 	}
 
@@ -644,13 +644,13 @@ read_header(struct header *hdr, int in)
 		return -1;
 	}
 
-	if (read_node(&hdr->self, in) == -1) {
+	if (read_node(&hdr->node, in) == -1) {
 		return -1;
 	}
 
 	/* verify SIG_BODY was signed by sender's ID */
-	if (!sign_verify(sig, sig_body, SIG_BODY_SIZE, hdr->self.id)) {
-		free_node(&hdr->self);
+	if (!sign_verify(sig, sig_body, SIG_BODY_SIZE, hdr->node.id)) {
+		free_node(&hdr->node);
 		return -1;
 	}
 

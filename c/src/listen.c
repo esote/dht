@@ -239,7 +239,7 @@ listener_work(struct dht *dht, int afd)
 		return -1;
 	}
 
-	if (dht_update(dht, &msg->hdr.self) == -1) {
+	if (dht_update(dht, &msg->hdr.node) == -1) {
 		(void)message_close(msg);
 		return -1;
 	}
