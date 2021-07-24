@@ -204,7 +204,7 @@ dht_bootstrap(struct dht *dht, const uint8_t id[NODE_ID_SIZE],
 	int afd;
 	struct session s;
 	union payload p;
-	struct message *msg;
+	struct message msg;
 
 	if ((afd = connect_remote(addr, port)) == -1) {
 		dht_log(LOG_ERR, "%s", strerror(errno));
@@ -225,26 +225,26 @@ dht_bootstrap(struct dht *dht, const uint8_t id[NODE_ID_SIZE],
 		return -1;
 	}
 
-	if ((msg = session_recv(&s)) == NULL) {
+	if (session_recv(&s, &msg) == -1) {
 		dht_log(LOG_ERR, "%s", strerror(errno));
 		(void)close(afd);
 		return -1;
 	}
-	if (msg->hdr.msg_type != TYPE_FNODE_RESP) {
-		dht_log(LOG_ERR, "unexpected msg_type %"PRIu8, msg->hdr.msg_type);
-		(void)message_close(msg);
+	if (msg.hdr.msg_type != TYPE_FNODE_RESP) {
+		dht_log(LOG_ERR, "unexpected msg_type %"PRIu8, msg.hdr.msg_type);
+		(void)message_close(&msg);
 		(void)close(afd);
 		return -1;
 	}
 
-	if (bootstrap_response_update(dht, msg) == -1) {
+	if (bootstrap_response_update(dht, &msg) == -1) {
 		dht_log(LOG_ERR, "%s", strerror(errno));
-		(void)message_close(msg);
+		(void)message_close(&msg);
 		(void)close(afd);
 		return -1;
 	}
 
-	if (message_close(msg) == -1) {
+	if (message_close(&msg) == -1) {
 		dht_log(LOG_ERR, "%s", strerror(errno));
 		(void)close(afd);
 		return -1;

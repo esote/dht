@@ -66,13 +66,11 @@ session_send(struct session *s, uint16_t msg_type, const union payload *p)
 	return 0;
 }
 
-struct message *
-session_recv(struct session *s)
+int
+session_recv(struct session *s, struct message *m)
 {
-	struct message *m;
-
-	if ((m = message_decode(s->fd, s->dht->id, s->dht->priv)) == NULL) {
-		return NULL;
+	if (message_decode(m, s->fd, s->dht->id, s->dht->priv) == -1) {
+		return -1;
 	}
 
 	if (!s->set) {
@@ -81,8 +79,8 @@ session_recv(struct session *s)
 		s->set = true;
 	} else if (memcmp(m->hdr.session_id, s->session_id, SESSION_ID_SIZE) != 0) {
 		(void)message_close(m);
-		return NULL;
+		return -1;
 	}
 
-	return m;
+	return 0;
 }

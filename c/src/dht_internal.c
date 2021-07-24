@@ -160,7 +160,7 @@ ping_node(const struct node *n, void *arg)
 	struct dht *dht;
 	struct session s;
 	int afd;
-	struct message *msg;
+	struct message msg;
 	bool alive;
 
 	dht = arg;
@@ -176,14 +176,14 @@ ping_node(const struct node *n, void *arg)
 		return false;
 	}
 
-	if ((msg = session_recv(&s)) == NULL) {
+	if (session_recv(&s, &msg) == -1) {
 		(void)close(afd);
 		return false;
 	}
 
-	alive = msg->hdr.msg_type == TYPE_PING;
+	alive = msg.hdr.msg_type == TYPE_PING;
 
-	if (message_close(msg) == -1) {
+	if (message_close(&msg) == -1) {
 		(void)close(afd);
 		return false;
 	}

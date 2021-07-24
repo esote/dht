@@ -77,7 +77,7 @@ struct message {
 int message_encode(const struct message *m, int out,
 	const unsigned char priv[PRIV_SIZE],
 	const unsigned char target_publ[PUBL_SIZE]);
-struct message *message_decode(int in,
+int message_decode(struct message *m, int in,
 	const unsigned char publ[PUBL_SIZE],
 	const unsigned char priv[PRIV_SIZE]);
 int message_close(struct message *m);

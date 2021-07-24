@@ -102,65 +102,66 @@ message_encode(const struct message *m, int out,
 	return -1;
 }
 
-struct message *
-message_decode(int in, const unsigned char publ[PUBL_SIZE],
+int
+message_decode(struct message *m, int in, const unsigned char publ[PUBL_SIZE],
 	const unsigned char priv[PRIV_SIZE])
 {
-	struct message *m;
 	int out;
 	pid_t child;
 	int status;
 
-	if ((m = malloc(sizeof(*m))) == NULL) {
-		return NULL;
-	}
-	m->_child = -1;
-	m->hdr.msg_type = TYPE_PING;
-	m->hdr.node.addr = NULL;
-
 	/* get output fd to decrypt body */
 	if ((child = decrypt(in, &out, publ, priv)) == -1) {
-		(void)message_close(m);
-		return NULL;
+		return -1;
 	}
-	m->_child = child;
 
 	if (read_header(&m->hdr, out) == -1) {
-		(void)message_close(m);
-		return NULL;
+		(void)kill(child, SIGKILL);
+		(void)close(out);
+		return -1;
 	}
 	if (read_payload(m->hdr.msg_type, &m->payload, out) == -1) {
-		(void)message_close(m);
-		return NULL;
+		(void)free_node(&m->hdr.node);
+		(void)kill(child, SIGKILL);
+		(void)close(out);
+		return -1;
 	}
 
 	if (message_keep_open(m)) {
 		/* return early, keep the message fd open and child running */
-		return m;
+		m->_child = child;
+		return 0;
 	}
 
-	/* close output fd, wait for child to stop, check output status */
 	if (close(out) == -1) {
-		(void)message_close(m);
-		return NULL;
+		(void)payload_close(m->hdr.msg_type, &m->payload);
+		(void)free_node(&m->hdr.node);
+		(void)kill(child, SIGKILL);
+		return -1;
 	}
+
 	while (waitpid(child, &status, 0) == -1) {
 		if (errno == EINTR) {
 			errno = 0;
 			continue;
 		}
-		(void)message_close(m);
-		return NULL;
+
+		(void)payload_close(m->hdr.msg_type, &m->payload);
+		(void)free_node(&m->hdr.node);
+		(void)kill(child, SIGKILL);
+		return -1;
 	}
-	m->_child = -1;
+
 	if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
 		/* child exited normally */
-		return m;
+		m->_child = -1;
+		return 0;
 	}
 
 	/* child failed */
-	(void)message_close(m);
-	return NULL;
+	(void)payload_close(m->hdr.msg_type, &m->payload);
+	(void)free_node(&m->hdr.node);
+	return -1;
 }
 
 int
@@ -172,7 +173,6 @@ message_close(struct message *m)
 		ret = -1;
 	}
 	free_node(&m->hdr.node);
-	free(m);
 	return ret;
 }
 

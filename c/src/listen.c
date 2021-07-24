@@ -226,25 +226,25 @@ static int
 listener_work(struct dht *dht, int afd)
 {
 	struct session s;
-	struct message *msg;
+	struct message msg;
 
 	session_init(&s, dht, NULL, afd);
 
-	if ((msg = session_recv(&s)) == NULL) {
+	if (session_recv(&s, &msg) == -1) {
 		return -1;
 	}
 
-	if (respond_msg(dht, &s, msg) == -1) {
-		(void)message_close(msg);
+	if (respond_msg(dht, &s, &msg) == -1) {
+		(void)message_close(&msg);
 		return -1;
 	}
 
-	if (dht_update(dht, &msg->hdr.node) == -1) {
-		(void)message_close(msg);
+	if (dht_update(dht, &msg.hdr.node) == -1) {
+		(void)message_close(&msg);
 		return -1;
 	}
 
-	return message_close(msg);
+	return message_close(&msg);
 }
 
 static int

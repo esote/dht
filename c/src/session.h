@@ -22,6 +22,6 @@ void session_init(struct session *s, struct dht *dht,
 	const uint8_t target_id[NODE_ID_SIZE], int fd);
 int session_send(struct session *s, uint16_t msg_type,
 	const union payload *p);
-struct message *session_recv(struct session *s);
+int session_recv(struct session *s, struct message *m);
 
 #endif /* DHT_SESSION_H */
