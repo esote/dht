@@ -54,7 +54,7 @@ dht_new(const struct dht_config *config)
 	}
 
 	/* Initialize routing table */
-	if ((dht->rtable = rtable_new(dht->id, ping_node, dht, K)) == NULL) {
+	if (rtable_init(&dht->rtable, dht->id, ping_node, dht) == -1) {
 		dht_log(LOG_CRIT, "%s", strerror(errno));
 		free(dht->addr);
 		free(dht);
@@ -64,7 +64,7 @@ dht_new(const struct dht_config *config)
 	/* Begin listening for incoming requests */
 	if (spawn_listeners(dht) == -1) {
 		dht_log(LOG_CRIT, "%s", strerror(errno));
-		(void)rtable_close(dht->rtable);
+		(void)rtable_close(&dht->rtable);
 		free(dht->addr);
 		free(dht);
 		return NULL;
@@ -187,7 +187,7 @@ dht_close(struct dht *dht)
 		ret = -1;
 	}
 
-	if (rtable_close(dht->rtable) == -1) {
+	if (rtable_close(&dht->rtable) == -1) {
 		dht_log(LOG_CRIT, "%s", strerror(errno));
 		ret = -1;
 	}

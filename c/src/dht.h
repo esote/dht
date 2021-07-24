@@ -6,8 +6,6 @@
 
 #include "proto.h"
 
-#define K 20
-
 struct dht;
 
 struct dht_config {

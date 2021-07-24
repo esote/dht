@@ -49,7 +49,7 @@ struct dht {
 	pthread_t listeners[LISTENER_COUNT];
 	sem_t listen_exit;
 
-	struct rtable *rtable;
+	struct rtable rtable;
 	struct storer *storer;
 };
 

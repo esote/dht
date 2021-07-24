@@ -35,11 +35,11 @@ static int respond_msg(struct dht *dht, struct session *s,
 static int respond_ping(struct session *s);
 static int respond_data(struct dht *dht, struct session *s,
 	const struct message *msg);
-static int respond_fnode(const struct dht *dht, struct session *s,
+static int respond_fnode(struct dht *dht, struct session *s,
 	const struct message *msg);
-static int send_fnode_closest(const struct dht *dht, struct session *s,
+static int send_fnode_closest(struct dht *dht, struct session *s,
 	const uint8_t id[NODE_ID_SIZE], uint8_t k);
-static int respond_fval(const struct dht *dht, struct session *s,
+static int respond_fval(struct dht *dht, struct session *s,
 	const struct message *msg);
 
 static int listen_success = 0;
@@ -282,14 +282,14 @@ respond_data(struct dht *dht, struct session *s, const struct message *msg)
 }
 
 static int
-respond_fnode(const struct dht *dht, struct session *s, const struct message *msg)
+respond_fnode(struct dht *dht, struct session *s, const struct message *msg)
 {
 	return send_fnode_closest(dht, s, msg->payload.fnode.target_id,
 		msg->payload.fnode.count);
 }
 
 static int
-send_fnode_closest(const struct dht *dht, struct session *s,
+send_fnode_closest(struct dht *dht, struct session *s,
 	const uint8_t id[NODE_ID_SIZE], uint8_t k)
 {
 	size_t len;
@@ -302,7 +302,7 @@ send_fnode_closest(const struct dht *dht, struct session *s,
 		return -1;
 	}
 
-	if (rtable_closest(dht->rtable, id, k, &closest, &len) == -1) {
+	if (rtable_closest(&dht->rtable, id, k, &closest, &len) == -1) {
 		return -1;
 	}
 
@@ -320,7 +320,7 @@ send_fnode_closest(const struct dht *dht, struct session *s,
 }
 
 static int
-respond_fval(const struct dht *dht, struct session *s, const struct message *msg)
+respond_fval(struct dht *dht, struct session *s, const struct message *msg)
 {
 	union payload p;
 

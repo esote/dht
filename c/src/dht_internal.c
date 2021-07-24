@@ -150,7 +150,7 @@ getaddrinfo_port(const char *node, uint16_t port, const struct addrinfo *hints,
 int
 dht_update(struct dht *dht, const struct node *target)
 {
-	return rtable_store(dht->rtable, target);
+	return rtable_store(&dht->rtable, target);
 }
 
 /* TODO: differentiate between internal error and remote error? */

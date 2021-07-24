@@ -13,37 +13,29 @@
 #include "proto.h"
 #include "rtable.h"
 
-#define BUCKET_COUNT ((NODE_ID_SIZE) * 8)
-
-struct rtable {
-	uint8_t self[NODE_ID_SIZE];
-	struct bucket buckets[BUCKET_COUNT];
-};
-
 static int rtable_close_buckets(struct rtable *rt, size_t i);
 static size_t bucket_index(const struct rtable *rt, const uint8_t id[NODE_ID_SIZE]);
 static void sort_closest(struct node *closest, size_t len,
 	const uint8_t id[NODE_ID_SIZE]);
 static int sort_compare(const void *x, const void *y, void *arg);
 
-struct rtable *
-rtable_new(const uint8_t self[NODE_ID_SIZE],
-	bool (*ping)(const struct node *n, void *arg), void *arg, size_t k)
+int
+rtable_init(struct rtable *rt, const uint8_t self[NODE_ID_SIZE],
+	bool (*alive)(const struct node *n, void *arg), void *arg)
 {
 	size_t i;
-	struct rtable *rt;
-	if ((rt = malloc(sizeof(*rt))) == NULL) {
-		return NULL;
-	}
+
 	(void)memcpy(rt->self, self, NODE_ID_SIZE);
+
 	for (i = 0; i < BUCKET_COUNT; i++) {
-		if (bucket_init(&rt->buckets[i], ping, arg, k) == -1) {
+		if (bucket_init(&rt->buckets[i], alive, arg, K) == -1) {
 			/* free previous indicies */
 			(void)rtable_close_buckets(rt, i);
-			return NULL;
+			return -1;
 		}
 	}
-	return rt;
+
+	return 0;
 }
 
 static int
@@ -57,7 +49,6 @@ rtable_close_buckets(struct rtable *rt, size_t i)
 		}
 	}
 
-	free(rt);
 	return ret;
 }
 
