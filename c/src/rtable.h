@@ -9,7 +9,6 @@
 #include "bucket.h"
 
 #define BUCKET_COUNT ((NODE_ID_SIZE) * 8)
-#define K 20
 
 struct rtable {
 	uint8_t self[NODE_ID_SIZE];

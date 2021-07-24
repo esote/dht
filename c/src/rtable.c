@@ -28,7 +28,7 @@ rtable_init(struct rtable *rt, const uint8_t self[NODE_ID_SIZE],
 	(void)memcpy(rt->self, self, NODE_ID_SIZE);
 
 	for (i = 0; i < BUCKET_COUNT; i++) {
-		if (bucket_init(&rt->buckets[i], alive, arg, K) == -1) {
+		if (bucket_init(&rt->buckets[i], alive, arg) == -1) {
 			/* free previous indicies */
 			(void)rtable_close_buckets(rt, i);
 			return -1;

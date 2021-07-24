@@ -19,20 +19,13 @@ static int bucket_append_inner(struct bucket *b, struct node **s, size_t *len,
 
 int
 bucket_init(struct bucket *b, bool (*alive)(const struct node *n, void *arg),
-	void *arg, size_t k)
+	void *arg)
 {
 	b->alive = alive;
 	b->arg = arg;
-	b->k = k;
 	b->n = 0;
 
 	if ((errno = pthread_rwlock_init(&b->mu, NULL)) != 0) {
-		return -1;
-	}
-
-	/* TODO: overflow n*m */
-	if ((b->nodes = malloc(sizeof(*b->nodes) * k)) == NULL) {
-		(void)pthread_rwlock_destroy(&b->mu);
 		return -1;
 	}
 
@@ -55,7 +48,6 @@ bucket_close(struct bucket *b)
 		free(b->nodes[i].addr);
 	}
 
-	free(b->nodes);
 	return ret;
 }
 
@@ -166,7 +158,7 @@ bucket_store_node(struct bucket *b, const struct node *n)
 		}
 	}
 
-	if (b->n == b->k) {
+	if (b->n == K) {
 		/* bucket full */
 		return -1;
 	}
