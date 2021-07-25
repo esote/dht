@@ -57,7 +57,6 @@
 
 	COUNT [1 byte] uint8_t >0
 	TARGET_ID [32 bytes]
-	TARGET_DYN_X [64 bytes]
 
 1.7 Find node response payload format
 

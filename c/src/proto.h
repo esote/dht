@@ -33,7 +33,6 @@ struct data_payload {
 struct fnode_payload {
 	uint8_t count;
 	uint8_t target_id[NODE_ID_SIZE];
-	uint8_t target_dyn_x[DYN_X_SIZE];
 };
 
 struct node {

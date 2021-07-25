@@ -296,7 +296,7 @@ length_payload_data(const struct data_payload *p, size_t *len)
 static int
 length_payload_fnode(const struct fnode_payload *p, size_t *len)
 {
-	*len = sizeof(p->count) + NODE_ID_SIZE + DYN_X_SIZE;
+	*len = sizeof(p->count) + NODE_ID_SIZE;
 	return 0;
 }
 
@@ -489,18 +489,8 @@ write_payload_fnode(const struct fnode_payload *p, int out)
 		return -1;
 	}
 
-	/* validate target ID and DYN X */
-	if (!valid_key(p->target_id, p->target_dyn_x)) {
-		return -1;
-	}
-
 	/* TARGET ID */
 	if (write2(out, p->target_id, NODE_ID_SIZE) != NODE_ID_SIZE) {
-		return -1;
-	}
-
-	/* TARGET DYN X */
-	if (write2(out, p->target_dyn_x, DYN_X_SIZE) != DYN_X_SIZE) {
 		return -1;
 	}
 
@@ -713,16 +703,6 @@ read_payload_fnode(struct fnode_payload *p, int in)
 
 	/* TARGET ID */
 	if (read2(in, p->target_id, NODE_ID_SIZE) != NODE_ID_SIZE) {
-		return -1;
-	}
-
-	/* TARGET DYN X */
-	if (read2(in, p->target_dyn_x, DYN_X_SIZE) != DYN_X_SIZE) {
-		return -1;
-	}
-
-	/* validate target ID and DYN X */
-	if (!valid_key(p->target_id, p->target_dyn_x)) {
 		return -1;
 	}
 
