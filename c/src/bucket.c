@@ -127,7 +127,7 @@ bucket_append_inner(struct bucket *b, struct node **s, size_t *len, size_t n)
 	}
 	*s = tmp;
 
-	for (j = 0; j < i; i++) {
+	for (j = 0; j < i; j++) {
 		(*s)[*len + j] = b->nodes[b->n - 1 - j];
 	}
 	*len += i;
