@@ -1,0 +1,14 @@
+bootstrap -> daemon
+	<- error
+
+data -> daemon
+	<- error
+
+load -> daemon
+	<- error
+	<- data
+
+SIGTERM -> daemon (shutdown)
+
+SIGHUP -> daemon (reload config)
+	<- error
