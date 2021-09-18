@@ -57,7 +57,6 @@ listener_start(int monitor)
 	pfd[0].events = POLLIN;
 
 	if ((sfd = listen_local(LISTEN_PORT)) == -1) {
-		close(monitor);
 		return -1;
 	}
 	pfd[1].fd = sfd;
@@ -70,6 +69,7 @@ listener_start(int monitor)
 				errno = 0;
 				continue;
 			}
+			close(sfd);
 			return -1;
 		case 0:
 			continue;
@@ -77,8 +77,7 @@ listener_start(int monitor)
 
 		if (pfd[0].revents != 0) {
 			/* monitor should only have data if responding to the listener, exit to be safe */
-			(void)close(monitor);
-			(void)close(sfd);
+			close(sfd);
 			if (pfd[0].revents & POLLHUP) {
 				/* parent stopped */
 				return 0;
@@ -92,8 +91,7 @@ listener_start(int monitor)
 			}
 			continue;
 		} else if (pfd[1].revents & (POLLERR | POLLHUP | POLLNVAL)) {
-			(void)close(monitor);
-			(void)close(sfd);
+			close(sfd);
 			return -1;
 		}
 	}

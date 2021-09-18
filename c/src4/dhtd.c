@@ -37,18 +37,14 @@ spawn_listeners(struct listener listeners[LISTENER_COUNT])
 	for (i = 0; i < LISTENER_COUNT; i++) {
 		if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == -1) {
 			dhtd_log(LOG_CRIT, "%zu", i);
-			if (i != 0) {
-				cull_listeners(listeners, i - 1);
-			}
+			cull_listeners(listeners, i);
 			return -1;
 		}
 		switch (pid = fork()) {
 		case -1:
 			close(sv[0]);
 			close(sv[1]);
-			if (i != 0) {
-				cull_listeners(listeners, i - 1);
-			}
+			cull_listeners(listeners, i);
 			return -1;
 		case 0:
 			/* child */
@@ -57,6 +53,7 @@ spawn_listeners(struct listener listeners[LISTENER_COUNT])
 			if (listener_start(sv[1]) == -1) {
 				dhtd_log(LOG_CRIT, "%zu", i);
 			}
+			close(sv[1]);
 			return -1;
 		default:
 			/* parent */
