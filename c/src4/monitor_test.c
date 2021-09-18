@@ -8,8 +8,8 @@
 #include <unistd.h>
 
 #include "crypto.h"
-#include "dhtd_test.h"
 #include "monitor.h"
+#include "test.h"
 
 static size_t
 min(size_t x, size_t y)
@@ -94,7 +94,8 @@ monitor_message_equal(const struct monitor_message *m1, const struct monitor_mes
 	case M_DISCOVER:
 		return true;
 	case M_SELF:
-		return node_equal(&m1->payload.self, &m2->payload.self);
+		return memcmp(m1->payload.self.network_id, m2->payload.self.network_id, sizeof(m1->payload.self.network_id)) == 0
+			&& node_equal(&m1->payload.self.node, &m2->payload.self.node);
 	case M_DECRYPT_REQ:
 		return memcmp(m1->payload.decrypt_req.ephem_publ, m2->payload.decrypt_req.ephem_publ, sizeof(m1->payload.decrypt_req.ephem_publ)) == 0;
 	case M_DECRYPT_RESP:
@@ -135,7 +136,7 @@ START_TEST (test_discover)
 	ck_assert(monitor_send(sv[0], &req) != -1);
 	ck_assert(monitor_recv(sv[1], &resp) != -1);
 	ck_assert(monitor_message_equal(&req, &resp));
-	monitor_message_close(&resp);
+	monitor_close(&resp);
 
 	ck_assert(close(sv[0]) != -1);
 	ck_assert(close(sv[1]) != -1);
@@ -147,22 +148,25 @@ START_TEST (test_self)
 	struct monitor_message req = {
 		.type = M_SELF,
 		.payload.self = {
-			.addrlen = 3,
-			.addr = {4, 4, 4},
-			.port = 5
+			.network_id = {1},
+			.node = {
+				.addrlen = 2,
+				.addr = {3, 3},
+				.port = 4
+			}
 		}
 	};
 	struct monitor_message resp;
 	unsigned char priv[PRIV_SIZE];
 
-	ck_assert(new_keypair(req.payload.self.id, priv, req.payload.self.dyn_x) != -1);
+	ck_assert(new_keypair(req.payload.self.node.id, priv, req.payload.self.node.dyn_x) != -1);
 
 	ck_assert(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != -1);
 
 	ck_assert(monitor_send(sv[0], &req) != -1);
 	ck_assert(monitor_recv(sv[1], &resp) != -1);
 	ck_assert(monitor_message_equal(&req, &resp));
-	monitor_message_close(&resp);
+	monitor_close(&resp);
 
 	ck_assert(close(sv[0]) != -1);
 	ck_assert(close(sv[1]) != -1);
@@ -184,7 +188,7 @@ START_TEST (test_decrypt_req)
 	ck_assert(monitor_send(sv[0], &req) != -1);
 	ck_assert(monitor_recv(sv[1], &resp) != -1);
 	ck_assert(monitor_message_equal(&req, &resp));
-	monitor_message_close(&resp);
+	monitor_close(&resp);
 
 	ck_assert(close(sv[0]) != -1);
 	ck_assert(close(sv[1]) != -1);
@@ -206,7 +210,7 @@ START_TEST (test_decrypt_resp)
 	ck_assert(monitor_send(sv[0], &req) != -1);
 	ck_assert(monitor_recv(sv[1], &resp) != -1);
 	ck_assert(monitor_message_equal(&req, &resp));
-	monitor_message_close(&resp);
+	monitor_close(&resp);
 
 	ck_assert(close(sv[0]) != -1);
 	ck_assert(close(sv[1]) != -1);
@@ -230,7 +234,7 @@ START_TEST (test_encrypt_req)
 	ck_assert(monitor_send(sv[0], &req) != -1);
 	ck_assert(monitor_recv(sv[1], &resp) != -1);
 	ck_assert(monitor_message_equal(&req, &resp));
-	monitor_message_close(&resp);
+	monitor_close(&resp);
 
 	ck_assert(close(sv[0]) != -1);
 	ck_assert(close(sv[1]) != -1);
@@ -254,7 +258,7 @@ START_TEST (test_encrypt_resp)
 	ck_assert(monitor_send(sv[0], &req) != -1);
 	ck_assert(monitor_recv(sv[1], &resp) != -1);
 	ck_assert(monitor_message_equal(&req, &resp));
-	monitor_message_close(&resp);
+	monitor_close(&resp);
 
 	ck_assert(close(sv[0]) != -1);
 	ck_assert(close(sv[1]) != -1);
@@ -273,7 +277,7 @@ START_TEST (test_ping)
 	ck_assert(monitor_send(sv[0], &req) != -1);
 	ck_assert(monitor_recv(sv[1], &resp) != -1);
 	ck_assert(monitor_message_equal(&req, &resp));
-	monitor_message_close(&resp);
+	monitor_close(&resp);
 
 	ck_assert(close(sv[0]) != -1);
 	ck_assert(close(sv[1]) != -1);
@@ -296,7 +300,7 @@ START_TEST (test_fnode)
 	ck_assert(monitor_send(sv[0], &req) != -1);
 	ck_assert(monitor_recv(sv[1], &resp) != -1);
 	ck_assert(monitor_message_equal(&req, &resp));
-	monitor_message_close(&resp);
+	monitor_close(&resp);
 
 	ck_assert(close(sv[0]) != -1);
 	ck_assert(close(sv[1]) != -1);
@@ -341,7 +345,7 @@ START_TEST (test_fnode_resp)
 	ck_assert(monitor_send(sv[0], &req) != -1);
 	ck_assert(monitor_recv(sv[1], &resp) != -1);
 	ck_assert(monitor_message_equal(&req, &resp));
-	monitor_message_close(&resp);
+	monitor_close(&resp);
 
 	ck_assert(close(sv[0]) != -1);
 	ck_assert(close(sv[1]) != -1);
@@ -387,7 +391,7 @@ START_TEST (test_data)
 	ck_assert(monitor_recv(sv[1], &resp) != -1);
 	ck_assert(monitor_message_equal(&req, &resp));
 	ck_assert(fd_equal(data, resp.payload.data.value, req.payload.data.length));
-	monitor_message_close(&resp);
+	monitor_close(&resp);
 
 	ck_assert(close(data_tmpfd) != -1);
 	if (resp.payload.data.value != req.payload.data.value) {
@@ -413,7 +417,7 @@ START_TEST (test_fval)
 	ck_assert(monitor_send(sv[0], &req) != -1);
 	ck_assert(monitor_recv(sv[1], &resp) != -1);
 	ck_assert(monitor_message_equal(&req, &resp));
-	monitor_message_close(&resp);
+	monitor_close(&resp);
 
 	ck_assert(close(sv[0]) != -1);
 	ck_assert(close(sv[1]) != -1);

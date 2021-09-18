@@ -1,6 +1,6 @@
 #include <check.h>
 
-#include "dhtd_test.h"
+#include "test.h"
 
 int
 main(void)

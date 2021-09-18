@@ -14,6 +14,11 @@
 #define M_DATA 10
 #define M_FVAL 11
 
+struct self {
+	uint8_t network_id[NETWORK_ID_SIZE];
+	struct node node;
+};
+
 struct decrypt_req {
 	uint8_t ephem_publ[EPHEM_PUBL_SIZE];
 };
@@ -35,7 +40,7 @@ struct encrypt_resp {
 };
 
 union monitor_payload {
-	struct node self;
+	struct self self;
 
 	struct decrypt_req decrypt_req;
 	struct decrypt_resp decrypt_resp;
@@ -55,4 +60,4 @@ struct monitor_message {
 
 int monitor_send(int monitor, const struct monitor_message *msg);
 int monitor_recv(int monitor, struct monitor_message *msg);
-void monitor_message_close(struct monitor_message *msg);
+void monitor_close(struct monitor_message *msg);

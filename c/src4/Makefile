@@ -11,7 +11,7 @@ DEBUG_FLAGS = $(FLAGS) -g3 -gdwarf
 debug: $(PROG).c $(SRCS)
 	$(CC) $(DEBUG_FLAGS) -o $(PROG).out $(PROG).c $(SRCS)
 
-TEST_PROG = dhtd_test
+TEST_PROG = test
 TEST_SRCS = $(SRCS) monitor_test.c
 TEST_FLAGS = $(DEBUG_FLAGS) -D C1=2 -D C2=2 -lcheck
 

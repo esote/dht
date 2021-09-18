@@ -6,12 +6,14 @@
 #include "proto.h"
 #include "util.h"
 
+static int monitor_encode_self(int monitor, const struct self *self);
 static int monitor_encode_decrypt_req(int monitor, const struct decrypt_req *decrypt_req);
 static int monitor_encode_decrypt_resp(int monitor, const struct decrypt_resp *decrypt_resp);
 static int monitor_encode_encrypt_req(int monitor, const struct encrypt_req *encrypt_req);
 static int monitor_encode_encrypt_resp(int monitor, const struct encrypt_resp *encrypt_resp);
 static int monitor_encode_data(int monitor, const struct data *data);
 
+static int monitor_decode_self(int monitor, struct self *self);
 static int monitor_decode_decrypt_req(int monitor, struct decrypt_req *decrypt_req);
 static int monitor_decode_decrypt_resp(int monitor, struct decrypt_resp *decrypt_resp);
 static int monitor_decode_encrypt_req(int monitor, struct encrypt_req *encrypt_req);
@@ -29,7 +31,7 @@ monitor_send(int monitor, const struct monitor_message *msg)
 	case M_DISCOVER:
 		return 0;
 	case M_SELF:
-		return encode_node(monitor, &msg->payload.self);
+		return monitor_encode_self(monitor, &msg->payload.self);
 	case M_DECRYPT_REQ:
 		return monitor_encode_decrypt_req(monitor, &msg->payload.decrypt_req);
 	case M_DECRYPT_RESP:
@@ -51,6 +53,16 @@ monitor_send(int monitor, const struct monitor_message *msg)
 	default:
 		return -1;
 	}
+}
+
+static int
+monitor_encode_self(int monitor, const struct self *self)
+{
+	if (write2(monitor, self->network_id, sizeof(self->network_id)) != sizeof(self->network_id)) {
+		return -1;
+	}
+
+	return encode_node(monitor, &self->node);
 }
 
 static int
@@ -158,7 +170,7 @@ monitor_recv(int monitor, struct monitor_message *msg)
 	case M_DISCOVER:
 		return 0;
 	case M_SELF:
-		return decode_node(monitor, &msg->payload.self);
+		return monitor_decode_self(monitor, &msg->payload.self);
 	case M_DECRYPT_REQ:
 		return monitor_decode_decrypt_req(monitor, &msg->payload.decrypt_req);
 	case M_DECRYPT_RESP:
@@ -182,6 +194,15 @@ monitor_recv(int monitor, struct monitor_message *msg)
 	}
 }
 
+static int
+monitor_decode_self(int monitor, struct self *self)
+{
+	if (read2(monitor, self->network_id, sizeof(self->network_id)) != sizeof(self->network_id)) {
+		return -1;
+	}
+
+	return decode_node(monitor, &self->node);
+}
 static int
 monitor_decode_decrypt_req(int monitor, struct decrypt_req *decrypt_req)
 {
@@ -283,7 +304,7 @@ monitor_decode_data(int monitor, struct data *data)
 }
 
 void
-monitor_message_close(struct monitor_message *msg)
+monitor_close(struct monitor_message *msg)
 {
 	if (msg->type == M_FNODE_RESP) {
 		free(msg->payload.fnode_resp.nodes);
