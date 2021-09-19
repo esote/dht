@@ -20,3 +20,4 @@ uint64_t ntoh_64(const void *src);
 size_t leading_zeros(const uint8_t *b, size_t len);
 void memxor(uint8_t *dst, const uint8_t *a, const uint8_t *b, size_t len);
 bool is_zero(const void *src, size_t len);
+size_t lcp(const uint8_t *x, const uint8_t *y, size_t len);

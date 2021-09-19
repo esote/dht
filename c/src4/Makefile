@@ -1,6 +1,6 @@
 PROG = dhtd
-SRCS = crypto.c crypto_sha3.c listen.c monitor.c proto.c util.c
-FLAGS = -pthread -lsodium -pedantic -Wall -Wshadow -Wpointer-arith -Wcast-qual \
+SRCS = crypto.c crypto_sha3.c listen.c monitor.c proto.c util.c rtable.c
+FLAGS = -pthread -lsodium -lsqlite3 -pedantic -Wall -Wshadow -Wpointer-arith -Wcast-qual \
 	-Wcast-align -Wstrict-prototypes -Wmissing-prototypes -Wconversion
 
 build: $(PROG).c $(SRCS)
@@ -12,8 +12,8 @@ debug: $(PROG).c $(SRCS)
 	$(CC) $(DEBUG_FLAGS) -o $(PROG).out $(PROG).c $(SRCS)
 
 TEST_PROG = test
-TEST_SRCS = $(SRCS) monitor_test.c
-TEST_FLAGS = $(DEBUG_FLAGS) -D C1=2 -D C2=2 -lcheck
+TEST_SRCS = $(SRCS) monitor_test.c rtable_test.c
+TEST_FLAGS = $(DEBUG_FLAGS) -D C1=2 -D C2=2 -D K=3 -lcheck
 
 .PHONY: test
 test: $(TEST_PROG).c $(TEST_SRCS)

@@ -5,6 +5,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "proto.h"
 #include "dhtd.h"
 
 struct listener {
@@ -19,8 +20,20 @@ int
 main(void)
 {
 	struct listener listeners[LISTENER_COUNT];
+	uint8_t priv[PRIV_SIZE];
+	uint8_t network_id[NETWORK_ID_SIZE] = {1};
+	struct node node = {
+		.addrlen = 9,
+		.addr = "localhost",
+		.port = 8080
+	};
 
 	if (spawn_listeners(listeners) == -1) {
+		return EXIT_FAILURE;
+	}
+
+	if (new_keypair(node.id, priv, node.dyn_x) == -1) {
+		cull_listeners(listeners, LISTENER_COUNT);
 		return EXIT_FAILURE;
 	}
 

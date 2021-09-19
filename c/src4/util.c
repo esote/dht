@@ -386,3 +386,16 @@ is_zero(const void *src, size_t len)
 	}
 	return true;
 }
+
+size_t
+lcp(const uint8_t *x, const uint8_t *y, size_t len)
+{
+	size_t i;
+	uint8_t b;
+	for (i = 0; i < len; i++) {
+		if ((b = x[i] ^ y[i]) != 0) {
+			return i*8 + leading_zeros8(b);
+		}
+	}
+	return len*8;
+}
