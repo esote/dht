@@ -7,6 +7,7 @@
 #include "proto.h"
 #include "rtable.h"
 #include "test.h"
+#include "util.h"
 
 static bool
 alive_true(void *ctx, const struct node *n)
@@ -77,7 +78,35 @@ START_TEST (test_store)
 	ck_assert(rtable_close(&rt) != -1);
 }
 
-START_TEST (test_store_full)
+START_TEST (test_store_full_alive)
+{
+	struct rtable rt;
+
+	unsigned char self_id[NODE_ID_SIZE], self_priv[PRIV_SIZE], self_dyn_x[DYN_X_SIZE];
+	ck_assert(new_keypair(self_id, self_priv, self_dyn_x) != -1);
+
+	ck_assert(rtable_open(&rt, sqlite_tmpname, self_id, alive_true, NULL) != -1);
+
+	struct node n[K+1];
+	size_t failed = 0;
+	for (size_t i = 0; i < K+1; i++) {
+		do {
+			uint8_t n_priv[PRIV_SIZE];
+			ck_assert(new_keypair(n[i].id, n_priv, n[i].dyn_x) != -1);
+		} while (lcp(self_id, n[i].id, sizeof(self_id)) != 0);
+		n[i].addrlen = 1;
+		memcpy(n[i].addr, "a", 2);
+		n[i].port = 1;
+		if (rtable_store(&rt, &n[i]) == -1) {
+			failed++;
+		}
+	}
+	ck_assert(failed > 0);
+
+	ck_assert(rtable_close(&rt) != -1);
+}
+
+START_TEST (test_store_full_dead)
 {
 	struct rtable rt;
 
@@ -86,14 +115,15 @@ START_TEST (test_store_full)
 
 	ck_assert(rtable_open(&rt, sqlite_tmpname, self_id, alive_false, NULL) != -1);
 
-	struct node n[UINT8_MAX+2];
-	for (size_t i = 0; i < UINT8_MAX+2; i++) {
-		uint8_t n_priv[PRIV_SIZE];
-		ck_assert(new_keypair(n[i].id, n_priv, n[i].dyn_x) != -1);
-		n[i].addrlen = 3;
-		memcpy(n[i].addr, "123", 3);
-		n[i].port = 123;
-
+	struct node n[K+1];
+	for (size_t i = 0; i < K+1; i++) {
+		do {
+			uint8_t n_priv[PRIV_SIZE];
+			ck_assert(new_keypair(n[i].id, n_priv, n[i].dyn_x) != -1);
+		} while (lcp(self_id, n[i].id, sizeof(self_id)) != 0);
+		n[i].addrlen = 1;
+		memcpy(n[i].addr, "a", 2);
+		n[i].port = 1;
 		ck_assert(rtable_store(&rt, &n[i]) != -1);
 	}
 
@@ -115,7 +145,8 @@ suite_rtable(void)
 	TCase *store = tcase_create("store");
 	tcase_add_checked_fixture(store, sqlite_setup, sqlite_teardown);
 	tcase_add_test(store, test_store);
-	tcase_add_test(store, test_store_full);
+	tcase_add_test(store, test_store_full_alive);
+	tcase_add_test(store, test_store_full_dead);
 	suite_add_tcase(s, store);
 
 	return s;
