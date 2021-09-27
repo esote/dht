@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include "dhtd.h"
+#include "listen.h"
 #include "monitor.h"
 #include "proto.h"
 
@@ -21,8 +22,6 @@ struct listen_ctx {
 	struct node node;
 };
 
-static int privsep(void);
-static int listen_discover(int monitor, uint8_t network_id[NETWORK_ID_SIZE], struct node *self);
 static int listen_local(uint16_t port);
 static int getaddrinfo_port(const char *node, uint16_t port, const struct addrinfo *hints, struct addrinfo **res);
 static int socket_timeout(int fd);
@@ -37,33 +36,24 @@ static int respond_data(const struct listen_ctx *ctx, int afd, const struct mess
 static int respond_fval(const struct listen_ctx *ctx, int afd, const struct message *req);
 
 int
-listener_start(int monitor)
+listener_start(int monitor, struct config *config)
 {
-#define NUM_FDS 2
-	struct pollfd pfd[NUM_FDS];
+	struct pollfd pfd;
 	int sfd;
 	struct listen_ctx ctx;
 
-	if (privsep() == -1) {
-		return -1;
-	}
-
-	if (listen_discover(monitor, ctx.network_id, &ctx.node) == -1) {
-		return -1;
-	}
+	memcpy(ctx.network_id, config->network_id, sizeof(config->network_id));
+	ctx.node = config->node;
 	ctx.monitor = monitor;
-
-	pfd[0].fd = monitor;
-	pfd[0].events = POLLIN;
 
 	if ((sfd = listen_local(LISTEN_PORT)) == -1) {
 		return -1;
 	}
-	pfd[1].fd = sfd;
-	pfd[1].events = POLLIN;
+	pfd.fd = sfd;
+	pfd.events = POLLIN;
 
 	for (;;) {
-		switch (poll(pfd, NUM_FDS, LISTEN_POLL_TIMEOUT)) {
+		switch (poll(&pfd, 1, LISTEN_POLL_TIMEOUT)) {
 		case -1:
 			if (errno == EINTR || errno == EAGAIN) {
 				errno = 0;
@@ -75,58 +65,16 @@ listener_start(int monitor)
 			continue;
 		}
 
-		if (pfd[0].revents != 0) {
-			/* monitor should only have data if responding to the listener, exit to be safe */
-			close(sfd);
-			if (pfd[0].revents & POLLHUP) {
-				/* parent stopped */
-				return 0;
-			}
-			return -1;
-		}
-
-		if (pfd[1].revents & POLLIN) {
+		if (pfd.revents & POLLIN) {
 			if (listen_accept(&ctx, sfd) == -1) {
 				dhtd_log(LOG_WARNING, "accept");
 			}
 			continue;
-		} else if (pfd[1].revents & (POLLERR | POLLHUP | POLLNVAL)) {
+		} else {
 			close(sfd);
 			return -1;
 		}
 	}
-}
-
-static int
-privsep(void)
-{
-	/* TODO: lower user privs, pledge "stdio net", unveil, chroot, etc. */
-	return 0;
-}
-
-static int
-listen_discover(int monitor, uint8_t network_id[NETWORK_ID_SIZE], struct node *self)
-{
-	struct monitor_message req, resp;
-
-	req.type = M_DISCOVER;
-	if (monitor_send(monitor, &req) == -1) {
-		return -1;
-	}
-
-	if (monitor_recv(monitor, &resp) == -1) {
-		return -1;
-	}
-	if (resp.type != M_SELF) {
-		monitor_close(&resp);
-		return -1;
-	}
-
-	memcpy(network_id, resp.payload.self.network_id, sizeof(resp.payload.self.network_id));
-	*self = resp.payload.self.node;
-
-	monitor_close(&resp);
-	return 0;
 }
 
 static int

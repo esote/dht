@@ -11,7 +11,8 @@
 
 #define dhtd_log(priority, format, ...) syslog((priority), "%s:%s:%d [pid %d] (errno %d) " format, __FILE__, __func__, __LINE__, getpid(), errno, ## __VA_ARGS__)
 
-#define LISTENER_COUNT 1
+#define HANDLER_COUNT 1
+
 #define LISTEN_PORT 8080
 #define LISTEN_POLL_TIMEOUT (-1)
 #define LISTEN_BACKLOG 64
@@ -26,6 +27,3 @@
 
 #define SOCKET_TIMEOUT_SEC 0
 #define SOCKET_TIMEOUT_USEC 100000 /* 0.1 seconds */
-
-int listener_start(int monitor);
-

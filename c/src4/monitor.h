@@ -2,21 +2,21 @@
 
 #include "proto.h"
 
-#define M_DISCOVER 1
-#define M_SELF 2
-#define M_DECRYPT_REQ 3
-#define M_DECRYPT_RESP 4
-#define M_ENCRYPT_REQ 5
-#define M_ENCRYPT_RESP 6
-#define M_PING 7
-#define M_FNODE 8
-#define M_FNODE_RESP 9
-#define M_DATA 10
-#define M_FVAL 11
+#define M_CONFIG 0
+#define M_DECRYPT_REQ 1
+#define M_DECRYPT_RESP 2
+#define M_ENCRYPT_REQ 3
+#define M_ENCRYPT_RESP 4
+#define M_PING 5
+#define M_FNODE 6
+#define M_FNODE_RESP 7
+#define M_DATA 8
+#define M_FVAL 9
 
-struct self {
+struct config {
 	uint8_t network_id[NETWORK_ID_SIZE];
 	struct node node;
+	char rtable_filename[PATH_MAX + 1];
 };
 
 struct decrypt_req {
@@ -40,7 +40,7 @@ struct encrypt_resp {
 };
 
 union monitor_payload {
-	struct self self;
+	struct config config;
 
 	struct decrypt_req decrypt_req;
 	struct decrypt_resp decrypt_resp;

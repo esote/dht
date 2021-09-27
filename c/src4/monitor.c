@@ -6,14 +6,14 @@
 #include "proto.h"
 #include "util.h"
 
-static int monitor_encode_self(int monitor, const struct self *self);
+static int monitor_encode_config(int monitor, const struct config *config);
 static int monitor_encode_decrypt_req(int monitor, const struct decrypt_req *decrypt_req);
 static int monitor_encode_decrypt_resp(int monitor, const struct decrypt_resp *decrypt_resp);
 static int monitor_encode_encrypt_req(int monitor, const struct encrypt_req *encrypt_req);
 static int monitor_encode_encrypt_resp(int monitor, const struct encrypt_resp *encrypt_resp);
 static int monitor_encode_data(int monitor, const struct data *data);
 
-static int monitor_decode_self(int monitor, struct self *self);
+static int monitor_decode_config(int monitor, struct config *config);
 static int monitor_decode_decrypt_req(int monitor, struct decrypt_req *decrypt_req);
 static int monitor_decode_decrypt_resp(int monitor, struct decrypt_resp *decrypt_resp);
 static int monitor_decode_encrypt_req(int monitor, struct encrypt_req *encrypt_req);
@@ -28,10 +28,8 @@ monitor_send(int monitor, const struct monitor_message *msg)
 	}
 
 	switch (msg->type) {
-	case M_DISCOVER:
-		return 0;
-	case M_SELF:
-		return monitor_encode_self(monitor, &msg->payload.self);
+	case M_CONFIG:
+		return monitor_encode_config(monitor, &msg->payload.config);
 	case M_DECRYPT_REQ:
 		return monitor_encode_decrypt_req(monitor, &msg->payload.decrypt_req);
 	case M_DECRYPT_RESP:
@@ -56,13 +54,21 @@ monitor_send(int monitor, const struct monitor_message *msg)
 }
 
 static int
-monitor_encode_self(int monitor, const struct self *self)
+monitor_encode_config(int monitor, const struct config *config)
 {
-	if (write2(monitor, self->network_id, sizeof(self->network_id)) != sizeof(self->network_id)) {
+	if (write2(monitor, config->network_id, sizeof(config->network_id)) != sizeof(config->network_id)) {
 		return -1;
 	}
 
-	return encode_node(monitor, &self->node);
+	if (encode_node(monitor, &config->node) == -1) {
+		return -1;
+	}
+
+	if (write2(monitor, &config->rtable_filename, sizeof(config->rtable_filename)) != sizeof(config->rtable_filename)) {
+		return -1;
+	}
+
+	return 0;
 }
 
 static int
@@ -167,10 +173,8 @@ monitor_recv(int monitor, struct monitor_message *msg)
 	}
 
 	switch (msg->type) {
-	case M_DISCOVER:
-		return 0;
-	case M_SELF:
-		return monitor_decode_self(monitor, &msg->payload.self);
+	case M_CONFIG:
+		return monitor_decode_config(monitor, &msg->payload.config);
 	case M_DECRYPT_REQ:
 		return monitor_decode_decrypt_req(monitor, &msg->payload.decrypt_req);
 	case M_DECRYPT_RESP:
@@ -195,13 +199,21 @@ monitor_recv(int monitor, struct monitor_message *msg)
 }
 
 static int
-monitor_decode_self(int monitor, struct self *self)
+monitor_decode_config(int monitor, struct config *config)
 {
-	if (read2(monitor, self->network_id, sizeof(self->network_id)) != sizeof(self->network_id)) {
+	if (read2(monitor, config->network_id, sizeof(config->network_id)) != sizeof(config->network_id)) {
 		return -1;
 	}
 
-	return decode_node(monitor, &self->node);
+	if (decode_node(monitor, &config->node) == -1) {
+		return -1;
+	}
+
+	if (read2(monitor, &config->rtable_filename, sizeof(config->rtable_filename)) != sizeof(config->rtable_filename)) {
+		return -1;
+	}
+
+	return 0;
 }
 static int
 monitor_decode_decrypt_req(int monitor, struct decrypt_req *decrypt_req)

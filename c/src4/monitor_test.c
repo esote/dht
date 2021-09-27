@@ -91,11 +91,10 @@ monitor_message_equal(const struct monitor_message *m1, const struct monitor_mes
 		return false;
 	}
 	switch (m1->type) {
-	case M_DISCOVER:
-		return true;
-	case M_SELF:
-		return memcmp(m1->payload.self.network_id, m2->payload.self.network_id, sizeof(m1->payload.self.network_id)) == 0
-			&& node_equal(&m1->payload.self.node, &m2->payload.self.node);
+	case M_CONFIG:
+		return memcmp(m1->payload.config.network_id, m2->payload.config.network_id, sizeof(m1->payload.config.network_id)) == 0
+			&& node_equal(&m1->payload.config.node, &m2->payload.config.node)
+			&& strncmp(m1->payload.config.rtable_filename, m2->payload.config.rtable_filename, sizeof(m1->payload.config.rtable_filename)) == 0;
 	case M_DECRYPT_REQ:
 		return memcmp(m1->payload.decrypt_req.ephem_publ, m2->payload.decrypt_req.ephem_publ, sizeof(m1->payload.decrypt_req.ephem_publ)) == 0;
 	case M_DECRYPT_RESP:
@@ -123,43 +122,25 @@ monitor_message_equal(const struct monitor_message *m1, const struct monitor_mes
 	}
 }
 
-START_TEST (test_discover)
+START_TEST (test_config)
 {
 	int sv[2];
 	struct monitor_message req = {
-		.type = M_DISCOVER
-	};
-	struct monitor_message resp;
-
-	ck_assert(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != -1);
-
-	ck_assert(monitor_send(sv[0], &req) != -1);
-	ck_assert(monitor_recv(sv[1], &resp) != -1);
-	ck_assert(monitor_message_equal(&req, &resp));
-	monitor_close(&resp);
-
-	ck_assert(close(sv[0]) != -1);
-	ck_assert(close(sv[1]) != -1);
-}
-
-START_TEST (test_self)
-{
-	int sv[2];
-	struct monitor_message req = {
-		.type = M_SELF,
-		.payload.self = {
+		.type = M_CONFIG,
+		.payload.config = {
 			.network_id = {1},
 			.node = {
 				.addrlen = 2,
 				.addr = {3, 3},
 				.port = 4
-			}
+			},
+			.rtable_filename = "/tmp/xyz"
 		}
 	};
 	struct monitor_message resp;
 	unsigned char priv[PRIV_SIZE];
 
-	ck_assert(new_keypair(req.payload.self.node.id, priv, req.payload.self.node.dyn_x) != -1);
+	ck_assert(new_keypair(req.payload.config.node.id, priv, req.payload.config.node.dyn_x) != -1);
 
 	ck_assert(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != -1);
 
@@ -428,13 +409,9 @@ suite_monitor(void)
 {
 	Suite *s = suite_create("monitor");
 
-	TCase *discover = tcase_create("discover");
-	tcase_add_test(discover, test_discover);
-	suite_add_tcase(s, discover);
-
-	TCase *self = tcase_create("self");
-	tcase_add_test(self, test_self);
-	suite_add_tcase(s, self);
+	TCase *config = tcase_create("config");
+	tcase_add_test(config, test_config);
+	suite_add_tcase(s, config);
 
 	TCase *decrypt_req = tcase_create("decrypt_req");
 	tcase_add_test(decrypt_req, test_decrypt_req);

@@ -1,8 +1,8 @@
 #pragma once
 
 #include <sqlite3.h>
-#include <stdint.h>
 
+#include "monitor.h"
 #include "proto.h"
 
 struct rtable {
@@ -21,6 +21,8 @@ struct rtable {
 #ifndef K
 #define K 20
 #endif
+
+int rtable_start(int monitor, struct config *config);
 
 int rtable_open(struct rtable *rt, const char *filename, const uint8_t self[NODE_ID_SIZE], bool (*alive)(void *ctx, const struct node *n), void *alive_ctx);
 int rtable_close(struct rtable *rt);

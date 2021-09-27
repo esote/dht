@@ -8,14 +8,6 @@
 #include "rtable.h"
 #include "util.h"
 
-#define CREATE_TABLE "CREATE TABLE IF NOT EXISTS \"rtable\" (" \
-	"\"id\" BLOB PRIMARY KEY NOT NULL," \
-	"\"dyn_x\" BLOB NOT NULL," \
-	"\"addr\" BLOB NOT NULL," \
-	"\"port\" INT NOT NULL," \
-	"\"dist\" INT NOT NULL," \
-	"\"last_ping\" INT NOT NULL);"
-
 #define BEGIN_TRAN "BEGIN TRANSACTION;"
 #define END_TRAN "END TRANSACTION;"
 #define ROLLBACK_TRAN "ROLLBACK TRANSACTION;"
@@ -27,6 +19,12 @@ static int delete_node(struct rtable *rt, const uint8_t node_id[NODE_ID_SIZE]);
 static int insert_node(struct rtable *rt, const struct node *n, int dist);
 static int decode_node_row(sqlite3_stmt *stmt, struct node *n);
 
+int
+rtable_start(int monitor, struct config *config)
+{
+	return -1;
+}
+
 /* TODO: log sqlite3 errors if ret != SQLITE_OK, errmsg for sqlite3_exec */
 int
 rtable_open(struct rtable *rt, const char *filename, const uint8_t self[NODE_ID_SIZE], bool (*alive)(void *ctx, const struct node *n), void *alive_ctx)
@@ -37,11 +35,6 @@ rtable_open(struct rtable *rt, const char *filename, const uint8_t self[NODE_ID_
 	}
 
 	if (db_restrict(rt->db) == -1) {
-		assert(sqlite3_close(rt->db) == SQLITE_OK);
-		return -1;
-	}
-
-	if (sqlite3_exec(rt->db, CREATE_TABLE, NULL, NULL, NULL) != SQLITE_OK) {
 		assert(sqlite3_close(rt->db) == SQLITE_OK);
 		return -1;
 	}
@@ -184,6 +177,17 @@ db_restrict(sqlite3 *db)
 static int
 db_prepare(struct rtable *rt)
 {
+#define CREATE_TABLE "CREATE TABLE IF NOT EXISTS \"rtable\" (" \
+	"\"id\" BLOB PRIMARY KEY NOT NULL," \
+	"\"dyn_x\" BLOB NOT NULL," \
+	"\"addr\" BLOB NOT NULL," \
+	"\"port\" INT NOT NULL," \
+	"\"dist\" INT NOT NULL," \
+	"\"last_ping\" INT NOT NULL);"
+	if (sqlite3_exec(rt->db, CREATE_TABLE, NULL, NULL, NULL) != SQLITE_OK) {
+		return -1;
+	}
+
 #define SELECT_OLD "SELECT \"id\", \"dyn_x\", \"addr\", \"port\" FROM \"rtable\" " \
 	"WHERE \"dist\" = @dist " \
 	"ORDER BY \"last_ping\" ASC " \
