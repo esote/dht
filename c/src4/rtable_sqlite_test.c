@@ -6,6 +6,7 @@
 
 #include "proto.h"
 #include "rtable.h"
+#include "rtable_sqlite.h"
 #include "test.h"
 #include "util.h"
 
@@ -44,8 +45,8 @@ START_TEST (test_open)
 	struct rtable rt;
 	unsigned char id[NODE_ID_SIZE], priv[PRIV_SIZE], dyn_x[DYN_X_SIZE];
 	ck_assert(new_keypair(id, priv, dyn_x) != -1);
-	ck_assert(rtable_open(&rt, sqlite_tmpname, id, alive_true, NULL) != -1);
-	ck_assert(rtable_close(&rt) != -1);
+	ck_assert(rtable_sqlite(&rt, sqlite_tmpname, id, alive_true, NULL) != -1);
+	ck_assert(rt.close(&rt) != -1);
 }
 
 START_TEST (test_open_create)
@@ -54,8 +55,8 @@ START_TEST (test_open_create)
 	unsigned char id[NODE_ID_SIZE], priv[PRIV_SIZE], dyn_x[DYN_X_SIZE];
 	ck_assert(new_keypair(id, priv, dyn_x) != -1);
 	ck_assert(unlink(sqlite_tmpname) != -1);
-	ck_assert(rtable_open(&rt, sqlite_tmpname, id, alive_true, NULL) != -1);
-	ck_assert(rtable_close(&rt) != -1);
+	ck_assert(rtable_sqlite(&rt, sqlite_tmpname, id, alive_true, NULL) != -1);
+	ck_assert(rt.close(&rt) != -1);
 }
 
 START_TEST (test_store)
@@ -73,9 +74,9 @@ START_TEST (test_store)
 	unsigned char n_priv[PRIV_SIZE];
 	ck_assert(new_keypair(n.id, n_priv, n.dyn_x) != -1);
 
-	ck_assert(rtable_open(&rt, sqlite_tmpname, self_id, alive_true, NULL) != -1);
-	ck_assert(rtable_store(&rt, &n) != -1);
-	ck_assert(rtable_close(&rt) != -1);
+	ck_assert(rtable_sqlite(&rt, sqlite_tmpname, self_id, alive_true, NULL) != -1);
+	ck_assert(rt.store(&rt, &n) != -1);
+	ck_assert(rt.close(&rt) != -1);
 }
 
 START_TEST (test_store_full_alive)
@@ -85,7 +86,7 @@ START_TEST (test_store_full_alive)
 	unsigned char self_id[NODE_ID_SIZE], self_priv[PRIV_SIZE], self_dyn_x[DYN_X_SIZE];
 	ck_assert(new_keypair(self_id, self_priv, self_dyn_x) != -1);
 
-	ck_assert(rtable_open(&rt, sqlite_tmpname, self_id, alive_true, NULL) != -1);
+	ck_assert(rtable_sqlite(&rt, sqlite_tmpname, self_id, alive_true, NULL) != -1);
 
 	struct node n[K+1];
 	size_t failed = 0;
@@ -97,13 +98,13 @@ START_TEST (test_store_full_alive)
 		n[i].addrlen = 1;
 		memcpy(n[i].addr, "a", 2);
 		n[i].port = 1;
-		if (rtable_store(&rt, &n[i]) == -1) {
+		if (rt.store(&rt, &n[i]) == -1) {
 			failed++;
 		}
 	}
 	ck_assert(failed > 0);
 
-	ck_assert(rtable_close(&rt) != -1);
+	ck_assert(rt.close(&rt) != -1);
 }
 
 START_TEST (test_store_full_dead)
@@ -113,7 +114,7 @@ START_TEST (test_store_full_dead)
 	unsigned char self_id[NODE_ID_SIZE], self_priv[PRIV_SIZE], self_dyn_x[DYN_X_SIZE];
 	ck_assert(new_keypair(self_id, self_priv, self_dyn_x) != -1);
 
-	ck_assert(rtable_open(&rt, sqlite_tmpname, self_id, alive_false, NULL) != -1);
+	ck_assert(rtable_sqlite(&rt, sqlite_tmpname, self_id, alive_false, NULL) != -1);
 
 	struct node n[K+1];
 	for (size_t i = 0; i < K+1; i++) {
@@ -124,16 +125,16 @@ START_TEST (test_store_full_dead)
 		n[i].addrlen = 1;
 		memcpy(n[i].addr, "a", 2);
 		n[i].port = 1;
-		ck_assert(rtable_store(&rt, &n[i]) != -1);
+		ck_assert(rt.store(&rt, &n[i]) != -1);
 	}
 
-	ck_assert(rtable_close(&rt) != -1);
+	ck_assert(rt.close(&rt) != -1);
 }
 
 Suite *
-suite_rtable(void)
+suite_rtable_sqlite(void)
 {
-	Suite *s = suite_create("rtable");
+	Suite *s = suite_create("rtable_sqlite");
 
 	TCase *open = tcase_create("open");
 	tcase_add_checked_fixture(open, sqlite_setup, sqlite_teardown);

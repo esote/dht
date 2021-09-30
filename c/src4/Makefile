@@ -1,5 +1,5 @@
 PROG = dhtd
-SRCS = crypto.c crypto_sha3.c listen.c monitor.c proto.c util.c rtable.c
+SRCS = crypto.c crypto_sha3.c listen.c monitor.c proto.c util.c rtable.c rtable_sqlite.c
 FLAGS = -pthread -lsodium -lsqlite3 -pedantic -Wall -Wshadow -Wpointer-arith -Wcast-qual \
 	-Wcast-align -Wstrict-prototypes -Wmissing-prototypes -Wconversion
 
@@ -12,7 +12,7 @@ debug: $(PROG).c $(SRCS)
 	$(CC) $(DEBUG_FLAGS) -o $(PROG).out $(PROG).c $(SRCS)
 
 TEST_PROG = test
-TEST_SRCS = $(SRCS) monitor_test.c rtable_test.c
+TEST_SRCS = $(SRCS) monitor_test.c rtable_sqlite_test.c
 TEST_FLAGS = $(DEBUG_FLAGS) -D C1=2 -D C2=2 -D K=3 -lcheck
 
 .PHONY: test
