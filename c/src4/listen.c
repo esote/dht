@@ -16,35 +16,24 @@
 #include "monitor.h"
 #include "proto.h"
 
-struct listen_ctx {
-	int monitor;
-	uint8_t network_id[NETWORK_ID_SIZE];
-	struct node node;
-};
-
 static int listen_local(uint16_t port);
 static int getaddrinfo_port(const char *node, uint16_t port, const struct addrinfo *hints, struct addrinfo **res);
 static int socket_timeout(int fd);
 static int socket_reuse(int fd);
-static int listen_accept(const struct listen_ctx *ctx, int sfd);
-static int listen_work(const struct listen_ctx *ctx, int afd);
+static int listen_accept(int monitor, struct config *config, int sfd);
+static int listen_work(int monitor, struct config *config, int afd);
 static int listen_monitor_end(int monitor, struct node *node);
-static int respond_msg(const struct listen_ctx *ctx, int afd, const struct message *req);
-static int respond_ping(const struct listen_ctx *ctx, int afd, const struct message *req);
-static int respond_fnode(const struct listen_ctx *ctx, int afd, const struct message *req);
-static int respond_data(const struct listen_ctx *ctx, int afd, const struct message *req);
-static int respond_fval(const struct listen_ctx *ctx, int afd, const struct message *req);
+static int respond_msg(int monitor, struct config *config, int afd, const struct message *req);
+static int respond_ping(int monitor, struct config *config, int afd, const struct message *req);
+static int respond_fnode(int monitor, struct config *config, int afd, const struct message *req);
+static int respond_data(int monitor, struct config *config, int afd, const struct message *req);
+static int respond_fval(int monitor, struct config *config, int afd, const struct message *req);
 
 int
 listener_start(int monitor, struct config *config)
 {
 	struct pollfd pfd;
 	int sfd;
-	struct listen_ctx ctx;
-
-	memcpy(ctx.network_id, config->network_id, sizeof(config->network_id));
-	ctx.node = config->node;
-	ctx.monitor = monitor;
 
 	if ((sfd = listen_local(LISTEN_PORT)) == -1) {
 		return -1;
@@ -66,7 +55,7 @@ listener_start(int monitor, struct config *config)
 		}
 
 		if (pfd.revents & POLLIN) {
-			if (listen_accept(&ctx, sfd) == -1) {
+			if (listen_accept(monitor, config, sfd) == -1) {
 				dhtd_log(LOG_WARNING, "accept");
 			}
 			continue;
@@ -174,7 +163,7 @@ socket_reuse(int fd)
 }
 
 static int
-listen_accept(const struct listen_ctx *ctx, int sfd)
+listen_accept(int monitor, struct config *config, int sfd)
 {
 	int afd;
 
@@ -191,7 +180,7 @@ listen_accept(const struct listen_ctx *ctx, int sfd)
 		return -1;
 	}
 
-	if (listen_work(ctx, afd) == -1) {
+	if (listen_work(monitor, config, afd) == -1) {
 		close(afd);
 		return -1;
 	}
@@ -200,15 +189,15 @@ listen_accept(const struct listen_ctx *ctx, int sfd)
 }
 
 static int
-listen_work(const struct listen_ctx *ctx, int afd)
+listen_work(int monitor, struct config *config, int afd)
 {
 	struct message req;
 
-	if (message_recv(ctx->monitor, afd, &req) == -1) {
+	if (message_recv(monitor, afd, &req) == -1) {
 		return -1;
 	}
 
-	if (respond_msg(ctx, afd, &req) == -1) {
+	if (respond_msg(monitor, config, afd, &req) == -1) {
 		message_close(&req);
 		return -1;
 	}
@@ -217,7 +206,7 @@ listen_work(const struct listen_ctx *ctx, int afd)
 		return -1;
 	}
 
-	return listen_monitor_end(ctx->monitor, &req.header.node);
+	return listen_monitor_end(monitor, &req.header.node);
 }
 
 static int
@@ -233,36 +222,36 @@ listen_monitor_end(int monitor, struct node *node)
 }
 
 static int
-respond_msg(const struct listen_ctx *ctx, int afd, const struct message *req)
+respond_msg(int monitor, struct config *config, int afd, const struct message *req)
 {
 	switch (req->header.type) {
 	case TYPE_PING:
-		return respond_ping(ctx, afd, req);
+		return respond_ping(monitor, config, afd, req);
 	case TYPE_FNODE:
-		return respond_fnode(ctx, afd, req);
+		return respond_fnode(monitor, config, afd, req);
 	case TYPE_DATA:
-		return respond_data(ctx, afd, req);
+		return respond_data(monitor, config, afd, req);
 	case TYPE_FVAL:
-		return respond_fval(ctx, afd, req);
+		return respond_fval(monitor, config, afd, req);
 	default:
 		return -1;
 	}
 }
 
 static int
-respond_ping(const struct listen_ctx *ctx, int afd, const struct message *req)
+respond_ping(int monitor, struct config *config, int afd, const struct message *req)
 {
 	struct message resp;
 
 	memcpy(resp.header.session_id, req->header.session_id, sizeof(resp.header.session_id));
-	memcpy(resp.header.network_id, ctx->network_id, sizeof(resp.header.network_id));
+	memcpy(resp.header.network_id, config->network_id, sizeof(resp.header.network_id));
 	resp.header.type = TYPE_PING;
-	resp.header.node = ctx->node;
-	return message_send(ctx->monitor, afd, &resp, req->header.node.id);
+	resp.header.node = config->node;
+	return message_send(monitor, afd, &resp, req->header.node.id);
 }
 
 static int
-respond_fnode(const struct listen_ctx *ctx, int afd, const struct message *req)
+respond_fnode(int monitor, struct config *config, int afd, const struct message *req)
 {
 	struct monitor_message mreq, mresp;
 	struct message resp;
@@ -270,11 +259,11 @@ respond_fnode(const struct listen_ctx *ctx, int afd, const struct message *req)
 	mreq.type = M_FNODE;
 	mreq.payload.fnode.count = req->payload.fnode.count;
 	memcpy(mreq.payload.fnode.target_id, req->payload.fnode.target_id, sizeof(mreq.payload.fnode.target_id));
-	if (monitor_send(ctx->monitor, &mreq) == -1) {
+	if (monitor_send(monitor, &mreq) == -1) {
 		return -1;
 	}
 
-	if (monitor_recv(ctx->monitor, &mresp) == -1) {
+	if (monitor_recv(monitor, &mresp) == -1) {
 		return -1;
 	}
 	if (mresp.type != M_FNODE_RESP) {
@@ -283,11 +272,11 @@ respond_fnode(const struct listen_ctx *ctx, int afd, const struct message *req)
 	}
 
 	memcpy(resp.header.session_id, req->header.session_id, sizeof(resp.header.session_id));
-	memcpy(resp.header.network_id, ctx->network_id, sizeof(resp.header.network_id));
+	memcpy(resp.header.network_id, config->network_id, sizeof(resp.header.network_id));
 	resp.header.type = TYPE_FNODE_RESP;
-	resp.header.node = ctx->node;
+	resp.header.node = config->node;
 	resp.payload.fnode_resp = mresp.payload.fnode_resp;
-	if (message_send(ctx->monitor, afd, &resp, req->header.node.id) == -1) {
+	if (message_send(monitor, afd, &resp, req->header.node.id) == -1) {
 		monitor_close(&mresp);
 		return -1;
 	}
@@ -297,7 +286,7 @@ respond_fnode(const struct listen_ctx *ctx, int afd, const struct message *req)
 }
 
 static int
-respond_data(const struct listen_ctx *ctx, int afd, const struct message *req)
+respond_data(int monitor, struct config *config, int afd, const struct message *req)
 {
 	struct monitor_message mreq, mresp;
 	struct message resp;
@@ -306,11 +295,11 @@ respond_data(const struct listen_ctx *ctx, int afd, const struct message *req)
 	memcpy(mreq.payload.data.key, req->payload.data.key, sizeof(mreq.payload.data.key));
 	mreq.payload.data.length = req->payload.data.length;
 	mreq.payload.data.value = req->payload.data.value;
-	if (monitor_send(ctx->monitor, &mreq) == -1) {
+	if (monitor_send(monitor, &mreq) == -1) {
 		return -1;
 	}
 
-	if (monitor_recv(ctx->monitor, &mresp) == -1) {
+	if (monitor_recv(monitor, &mresp) == -1) {
 		return -1;
 	}
 	if (mresp.type != M_PING) {
@@ -319,10 +308,10 @@ respond_data(const struct listen_ctx *ctx, int afd, const struct message *req)
 	}
 
 	memcpy(resp.header.session_id, req->header.session_id, sizeof(resp.header.session_id));
-	memcpy(resp.header.network_id, ctx->network_id, sizeof(resp.header.network_id));
+	memcpy(resp.header.network_id, config->network_id, sizeof(resp.header.network_id));
 	resp.header.type = TYPE_PING;
-	resp.header.node = ctx->node;
-	if (message_send(ctx->monitor, afd, &resp, req->header.node.id) == -1) {
+	resp.header.node = config->node;
+	if (message_send(monitor, afd, &resp, req->header.node.id) == -1) {
 		monitor_close(&mresp);
 		return -1;
 	}
@@ -332,18 +321,18 @@ respond_data(const struct listen_ctx *ctx, int afd, const struct message *req)
 }
 
 static int
-respond_fval(const struct listen_ctx *ctx, int afd, const struct message *req)
+respond_fval(int monitor, struct config *config, int afd, const struct message *req)
 {
 	struct monitor_message mreq, mresp;
 	struct message resp;
 
 	mreq.type = M_FVAL;
 	memcpy(mreq.payload.fval.key, req->payload.fval.key, sizeof(mreq.payload.fval.key));
-	if (monitor_send(ctx->monitor, &mreq) == -1) {
+	if (monitor_send(monitor, &mreq) == -1) {
 		return -1;
 	}
 
-	if (monitor_recv(ctx->monitor, &mresp) == -1) {
+	if (monitor_recv(monitor, &mresp) == -1) {
 		return -1;
 	}
 	switch (mresp.type) {
@@ -361,7 +350,13 @@ respond_fval(const struct listen_ctx *ctx, int afd, const struct message *req)
 	}
 
 	memcpy(resp.header.session_id, req->header.session_id, sizeof(resp.header.session_id));
-	memcpy(resp.header.network_id, ctx->network_id, sizeof(resp.header.network_id));
-	resp.header.node = ctx->node;
-	return message_send(ctx->monitor, afd, &resp, req->header.node.id);
+	memcpy(resp.header.network_id, config->network_id, sizeof(resp.header.network_id));
+	resp.header.node = config->node;
+	if (message_send(monitor, afd, &resp, req->header.node.id) == -1) {
+		monitor_close(&mresp);
+		return -1;
+	}
+
+	monitor_close(&mresp);
+	return 0;
 }
