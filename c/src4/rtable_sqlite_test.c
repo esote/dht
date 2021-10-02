@@ -48,6 +48,7 @@ START_TEST (test_open)
 	ck_assert(rtable_sqlite(&rt, sqlite_tmpname, id, alive_true, NULL) != -1);
 	ck_assert(rt.close(&rt) != -1);
 }
+END_TEST
 
 START_TEST (test_open_create)
 {
@@ -58,6 +59,7 @@ START_TEST (test_open_create)
 	ck_assert(rtable_sqlite(&rt, sqlite_tmpname, id, alive_true, NULL) != -1);
 	ck_assert(rt.close(&rt) != -1);
 }
+END_TEST
 
 START_TEST (test_store)
 {
@@ -78,6 +80,7 @@ START_TEST (test_store)
 	ck_assert(rt.store(&rt, &n) != -1);
 	ck_assert(rt.close(&rt) != -1);
 }
+END_TEST
 
 START_TEST (test_store_full_alive)
 {
@@ -106,6 +109,7 @@ START_TEST (test_store_full_alive)
 
 	ck_assert(rt.close(&rt) != -1);
 }
+END_TEST
 
 START_TEST (test_store_full_dead)
 {
@@ -130,6 +134,7 @@ START_TEST (test_store_full_dead)
 
 	ck_assert(rt.close(&rt) != -1);
 }
+END_TEST
 
 Suite *
 suite_rtable_sqlite(void)

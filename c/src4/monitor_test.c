@@ -152,6 +152,7 @@ START_TEST (test_config)
 	ck_assert(close(sv[0]) != -1);
 	ck_assert(close(sv[1]) != -1);
 }
+END_TEST
 
 START_TEST (test_decrypt_req)
 {
@@ -174,6 +175,7 @@ START_TEST (test_decrypt_req)
 	ck_assert(close(sv[0]) != -1);
 	ck_assert(close(sv[1]) != -1);
 }
+END_TEST
 
 START_TEST (test_decrypt_resp)
 {
@@ -196,6 +198,7 @@ START_TEST (test_decrypt_resp)
 	ck_assert(close(sv[0]) != -1);
 	ck_assert(close(sv[1]) != -1);
 }
+END_TEST
 
 START_TEST (test_encrypt_req)
 {
@@ -220,6 +223,7 @@ START_TEST (test_encrypt_req)
 	ck_assert(close(sv[0]) != -1);
 	ck_assert(close(sv[1]) != -1);
 }
+END_TEST
 
 START_TEST (test_encrypt_resp)
 {
@@ -244,6 +248,7 @@ START_TEST (test_encrypt_resp)
 	ck_assert(close(sv[0]) != -1);
 	ck_assert(close(sv[1]) != -1);
 }
+END_TEST
 
 START_TEST (test_ping)
 {
@@ -263,6 +268,7 @@ START_TEST (test_ping)
 	ck_assert(close(sv[0]) != -1);
 	ck_assert(close(sv[1]) != -1);
 }
+END_TEST
 
 START_TEST (test_fnode)
 {
@@ -286,6 +292,7 @@ START_TEST (test_fnode)
 	ck_assert(close(sv[0]) != -1);
 	ck_assert(close(sv[1]) != -1);
 }
+END_TEST
 
 START_TEST (test_fnode_resp)
 {
@@ -331,6 +338,7 @@ START_TEST (test_fnode_resp)
 	ck_assert(close(sv[0]) != -1);
 	ck_assert(close(sv[1]) != -1);
 }
+END_TEST
 
 #define DATA_TMP_TEMPLATE "/tmp/dhtd.test.monitor.data.XXXXXXXXXX"
 static char data_tmpname[sizeof(DATA_TMP_TEMPLATE)] = {0};
@@ -381,6 +389,7 @@ START_TEST (test_data)
 	ck_assert(close(sv[0]) != -1);
 	ck_assert(close(sv[1]) != -1);
 }
+END_TEST
 
 START_TEST (test_fval)
 {
@@ -403,6 +412,7 @@ START_TEST (test_fval)
 	ck_assert(close(sv[0]) != -1);
 	ck_assert(close(sv[1]) != -1);
 }
+END_TEST
 
 Suite *
 suite_monitor(void)
