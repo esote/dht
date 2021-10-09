@@ -1,6 +1,6 @@
-#ifndef DHT_CRYPTO_H
-#define DHT_CRYPTO_H
+#pragma once
 
+#include <pthread.h>
 #include <sodium.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -10,37 +10,33 @@
 #define PUBL_SIZE crypto_sign_ed25519_PUBLICKEYBYTES
 #define PRIV_SIZE crypto_sign_ed25519_SECRETKEYBYTES
 
-/* Sign */
+#define EPHEM_PUBL_SIZE crypto_scalarmult_curve25519_BYTES
+#define EPHEM_KEY_SIZE crypto_aead_chacha20poly1305_KEYBYTES
 
 #define SIG_SIZE crypto_sign_BYTES
 
-int sign(unsigned char sig[SIG_SIZE], const void *msg, size_t msg_len,
-	const unsigned char priv[PRIV_SIZE]);
-bool sign_verify(const unsigned char sig[SIG_SIZE], const void *msg,
-	size_t msg_len, const unsigned char publ[PUBL_SIZE]);
-
-/* Hash (SHA2) */
-
 #define SHA2_512_SIZE crypto_hash_sha512_BYTES
-
-struct sha2_state {
-	crypto_hash_sha512_state state;
-};
-
-int sha2_init(struct sha2_state *state);
-int sha2_update(struct sha2_state *state, const uint8_t *m, size_t mlen);
-int sha2_final(struct sha2_state *state, uint8_t out[SHA2_512_SIZE]);
-
-/* Generate keypair */
-
 #define SHA3_512_SIZE KECCAK_DIGESTSIZE
 
-int new_keypair(unsigned char publ[PUBL_SIZE], unsigned char priv[PRIV_SIZE],
-	unsigned char x[SHA3_512_SIZE]);
-bool valid_key(const unsigned char publ[PUBL_SIZE],
-	const unsigned char x[SHA3_512_SIZE]);
+struct encrypt_arg {
+	int monitor;
+	int out;
+	int in;
+	uint64_t length;
+	uint8_t ephem_publ[EPHEM_PUBL_SIZE];
+	uint8_t ephem_key[EPHEM_KEY_SIZE];
+};
 
-/* Random */
-void crypto_rand(void *buf, size_t len);
+struct decrypt_arg {
+	int monitor;
+	int in;
+	int out;
+};
 
-#endif /* DHT_CRYPTO_H */
+int encrypt(struct encrypt_arg *arg, pthread_t *thread);
+int decrypt(struct decrypt_arg *arg, pthread_t *thread);
+
+bool valid_sig(const unsigned char sig[SIG_SIZE], const void *msg, size_t msg_len, const unsigned char publ[PUBL_SIZE]);
+
+int new_keypair(unsigned char publ[PUBL_SIZE], unsigned char priv[PRIV_SIZE], unsigned char x[SHA3_512_SIZE]);
+bool valid_key(const unsigned char id[PUBL_SIZE], const unsigned char x[SHA3_512_SIZE]);

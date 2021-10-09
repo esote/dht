@@ -1,4 +1,8 @@
-*.out
-*.swp
+# cmake
+/build/
+
+# valgrind
 vgcore.*
-src/test/*.test
+
+# vim
+*.swp

@@ -1,6 +1,0 @@
-Log levels:
-	LOG_CRIT: dht must close
-	LOG_ERR: unrecoverable error, dht still survives
-	LOG_WARN: recoverable error
-	LOG_INFO: useful info for user
-	LOG_DEBUG: useful info for dev

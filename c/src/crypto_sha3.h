@@ -1,5 +1,4 @@
-#ifndef DHT_CRYPTO_SHA3_H
-#define DHT_CRYPTO_SHA3_H
+#pragma once
 
 #include <stddef.h>
 #include <stdint.h>
@@ -20,5 +19,3 @@ struct sha3_state {
 void sha3_init(struct sha3_state *state);
 int sha3_update(struct sha3_state *state, const uint8_t *m, size_t mlen);
 void sha3_final(struct sha3_state *state, uint8_t out[KECCAK_DIGESTSIZE]);
-
-#endif /* DHT_CRYPTO_SHA3_H */

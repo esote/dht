@@ -1,8 +1,0 @@
-combine lset into map
-lset->list?
-rename all id->publ
-unit test sha3 against example outputs https://csrc.nist.gov/projects/cryptographic-standards-and-guidelines/example-values
-encrypt/write dht publ, priv (enc with pass from config)
-validate config
-need to ignore SIGPIPE?
-*ctx vs *arg naming

@@ -1,5 +1,0 @@
-ipc.c:
-	recvmsg, sendmsg with EINTR retry.
-io.c:
-	ensure total read < timeout, otherwise ddos could trickle 1 byte to
-	bypass timeouts.

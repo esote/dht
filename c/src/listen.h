@@ -1,6 +1,5 @@
-#ifndef DHT_LISTEN_H
-#define DHT_LISTEN_H
+#pragma once
 
-void *listener_start(void *arg);
+#include "monitor.h"
 
-#endif /* DHT_LISTEN_H */
+int listener_start(int monitor, struct config *config);

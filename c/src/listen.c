@@ -1,124 +1,110 @@
-#include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <netdb.h>
-#include <netinet/in.h>
 #include <poll.h>
-#include <semaphore.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
 
-#include "dht.h"
-#include "dht_internal.h"
-#include "io.h"
+#include "dhtd.h"
 #include "listen.h"
+#include "monitor.h"
 #include "proto.h"
-#include "rtable.h"
-#include "session.h"
-#include "storer.h"
-#include "util.h"
 
-#define LISTEN_BACKLOG 64
-
-static int listener_accept(struct dht *dht, int sfd);
-static int listen_net(uint16_t port);
+static int listen_local(uint16_t port);
+static int getaddrinfo_port(const char *node, uint16_t port, const struct addrinfo *hints, struct addrinfo **res);
+static int socket_timeout(int fd);
 static int socket_reuse(int fd);
-static int listener_work(struct dht *dht, int afd);
-static bool listener_should_exit(struct dht *dht);
-static int respond_msg(struct dht *dht, struct session *s,
-	const struct message *msg);
-static int respond_ping(struct session *s);
-static int respond_data(struct dht *dht, struct session *s,
-	const struct message *msg);
-static int respond_fnode(struct dht *dht, struct session *s,
-	const struct message *msg);
-static int send_fnode_closest(struct dht *dht, struct session *s,
-	const uint8_t id[NODE_ID_SIZE], uint8_t k);
-static int respond_fval(struct dht *dht, struct session *s,
-	const struct message *msg);
+static int listen_accept(int monitor, struct config *config, int sfd);
+static int listen_work(int monitor, struct config *config, int afd);
+static int listen_monitor_end(int monitor, struct node *node);
+static int respond_msg(int monitor, struct config *config, int afd, const struct message *req);
+static int respond_ping(int monitor, struct config *config, int afd, const struct message *req);
+static int respond_fnode(int monitor, struct config *config, int afd, const struct message *req);
+static int respond_data(int monitor, struct config *config, int afd, const struct message *req);
+static int respond_fval(int monitor, struct config *config, int afd, const struct message *req);
 
-static int listen_success = 0;
-
-void *
-listener_start(void *arg)
+int
+listener_start(int monitor, struct config *config)
 {
-	struct dht *dht;
+	struct pollfd pfd;
 	int sfd;
 
-	dht = arg;
-
-	if ((sfd = listen_net(dht->port)) == -1) {
-		dht_log(LOG_ERR, "%s", strerror(errno));
-		return NULL;
+	if ((sfd = listen_local(LISTEN_PORT)) == -1) {
+		return -1;
 	}
+	pfd.fd = sfd;
+	pfd.events = POLLIN;
 
-	if (listener_accept(dht, sfd) == -1) {
-		dht_log(LOG_ERR, "%s", strerror(errno));
-		(void)close(sfd);
-		return NULL;
+	for (;;) {
+		switch (poll(&pfd, 1, LISTEN_POLL_TIMEOUT)) {
+		case -1:
+			if (errno == EINTR || errno == EAGAIN) {
+				errno = 0;
+				continue;
+			}
+			close(sfd);
+			return -1;
+		case 0:
+			continue;
+		}
+
+		if (pfd.revents & POLLIN) {
+			if (listen_accept(monitor, config, sfd) == -1) {
+				dhtd_log(LOG_WARNING, "accept");
+			}
+			continue;
+		} else {
+			close(sfd);
+			return -1;
+		}
 	}
-
-	if (close(sfd) == -1) {
-		dht_log(LOG_ERR, "%s", strerror(errno));
-		return NULL;
-	}
-
-	return &listen_success;
 }
 
 static int
-listen_net(uint16_t port)
+listen_local(uint16_t port)
 {
 	int fd;
-	struct addrinfo hints;
+	struct addrinfo hints = { 0 };
 	struct addrinfo *result, *rp;
 	int n;
 
-	(void)memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
-	hints.ai_flags = 0;
-	hints.ai_protocol = 0;
 
 	if ((n = getaddrinfo_port(NULL, port, &hints, &result)) != 0) {
-		dht_log(LOG_ERR, "%s", gai_strerror(n));
 		return -1;
 	}
 
 	for (rp = result; rp != NULL; rp = rp->ai_next) {
-		fd = socket(rp->ai_family, rp->ai_socktype | SOCK_NONBLOCK,
-			rp->ai_protocol);
+		fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
 		if (fd == -1) {
-			dht_log(LOG_WARNING, "%s", strerror(errno));
 			continue;
 		}
 
 		if (socket_timeout(fd) == -1) {
-			dht_log(LOG_WARNING, "%s", strerror(errno));
-			(void)close(fd);
+			close(fd);
 			continue;
 		}
 
 		if (socket_reuse(fd) == -1) {
-			dht_log(LOG_WARNING, "%s", strerror(errno));
-			(void)close(fd);
+			close(fd);
 			continue;
 		}
 
 		if (bind(fd, rp->ai_addr, rp->ai_addrlen) == -1) {
-			dht_log(LOG_WARNING, "%s", strerror(errno));
-			(void)close(fd);
+			close(fd);
 			continue;
 		}
 
 		if (listen(fd, LISTEN_BACKLOG) == -1) {
-			dht_log(LOG_WARNING, "%s", strerror(errno));
-			(void)close(fd);
+			close(fd);
 			continue;
 		}
 
@@ -128,11 +114,41 @@ listen_net(uint16_t port)
 	freeaddrinfo(result);
 
 	if (rp == NULL) {
-		dht_log(LOG_ERR, "no address succeeded");
 		return -1;
 	}
 
 	return fd;
+}
+
+static int
+getaddrinfo_port(const char *node, uint16_t port, const struct addrinfo *hints,
+	struct addrinfo **res)
+{
+#define SERVICE_LEN (5+1)
+	char service[SERVICE_LEN];
+	int n;
+
+	n = snprintf(service, sizeof(service), "%"PRIu16, port);
+	if (n < 0 || n >= sizeof(service)) {
+		return EAI_NONAME;
+	}
+
+	return getaddrinfo(node, service, hints, res);
+}
+
+static int
+socket_timeout(int fd)
+{
+	struct timeval tv;
+
+	tv.tv_sec = SOCKET_TIMEOUT_SEC;
+	tv.tv_usec = SOCKET_TIMEOUT_USEC;
+
+	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == -1) {
+		return -1;
+	}
+
+	return setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 }
 
 static int
@@ -148,192 +164,200 @@ socket_reuse(int fd)
 }
 
 static int
-listener_accept(struct dht *dht, int sfd)
+listen_accept(int monitor, struct config *config, int sfd)
 {
-	struct pollfd pfd;
 	int afd;
 
-	pfd.fd = sfd;
-	pfd.events = POLLIN;
-
-	for (;;) {
-		if (listener_should_exit(dht)) {
+	if ((afd = accept(sfd, NULL, NULL)) == -1) {
+		if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+			errno = 0;
 			return 0;
 		}
-
-		/* wait for new connection, with timeout */
-		switch (poll(&pfd, 1, ACCEPT_TIMEOUT)) {
-		case -1:
-			if (errno == EAGAIN || errno == EINTR) {
-				dht_log(LOG_DEBUG, "poll interrupted");
-				errno = 0;
-				continue;
-			}
-			dht_log(LOG_ERR, "%s", strerror(errno));
-			return -1;
-		case 0:
-			continue;
-		}
-
-		if ((afd = accept(sfd, NULL, NULL)) == -1) {
-			if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
-				errno = 0;
-				continue;
-			}
-			dht_log(LOG_ERR, "%s", strerror(errno));
-			return -1;
-		}
-
-		if (socket_timeout(afd) == -1) {
-			dht_log(LOG_ERR, "%s", strerror(errno));
-			(void)close(afd);
-			return -1;
-		}
-
-		if (listener_work(dht, afd) == -1) {
-			dht_log(LOG_WARNING, "%s", strerror(errno));
-		}
-
-		if (close(afd) == -1) {
-			dht_log(LOG_ERR, "%s", strerror(errno));
-			return -1;
-		}
+		return -1;
 	}
-}
 
-static bool
-listener_should_exit(struct dht *dht)
-{
-	for (;;) {
-		if (sem_trywait(&dht->listen_exit) == 0) {
-			return true;
-		}
-		switch (errno) {
-		case EINTR:
-			/* trywait was interrupted */
-			continue;
-		case EAGAIN:
-			/* exit not signalled */
-			return false;
-		default:
-			/* unknown error, exit to be safe */
-			return true;
-		}
+	if (socket_timeout(afd) == -1) {
+		close(afd);
+		return -1;
 	}
+
+	if (listen_work(monitor, config, afd) == -1) {
+		close(afd);
+		return -1;
+	}
+
+	return close(afd);
 }
 
 static int
-listener_work(struct dht *dht, int afd)
+listen_work(int monitor, struct config *config, int afd)
 {
-	struct session s;
-	struct message msg;
+	struct message req;
 
-	session_init(&s, dht, NULL, afd);
-
-	if (session_recv(&s, &msg) == -1) {
+	if (message_recv(monitor, afd, &req) == -1) {
 		return -1;
 	}
 
-	if (respond_msg(dht, &s, &msg) == -1) {
-		(void)message_close(&msg);
+	if (respond_msg(monitor, config, afd, &req) == -1) {
+		message_close(&req);
 		return -1;
 	}
 
-	if (dht_update(dht, &msg.hdr.node) == -1) {
-		(void)message_close(&msg);
+	if (message_close(&req) == -1) {
 		return -1;
 	}
 
-	return message_close(&msg);
+	return listen_monitor_end(monitor, &req.header.node);
 }
 
 static int
-respond_msg(struct dht *dht, struct session *s, const struct message *msg)
+listen_monitor_end(int monitor, struct node *node)
 {
-	switch (msg->hdr.msg_type) {
+	struct monitor_message req;
+
+	req.type = M_FNODE_RESP;
+	req.payload.fnode_resp.count = 1;
+	req.payload.fnode_resp.nodes = node;
+
+	return monitor_send(monitor, &req);
+}
+
+static int
+respond_msg(int monitor, struct config *config, int afd, const struct message *req)
+{
+	switch (req->header.type) {
 	case TYPE_PING:
-		return respond_ping(s);
-	case TYPE_DATA:
-		return respond_data(dht, s, msg);
+		return respond_ping(monitor, config, afd, req);
 	case TYPE_FNODE:
-		return respond_fnode(dht, s, msg);
+		return respond_fnode(monitor, config, afd, req);
+	case TYPE_DATA:
+		return respond_data(monitor, config, afd, req);
 	case TYPE_FVAL:
-		return respond_fval(dht, s, msg);
+		return respond_fval(monitor, config, afd, req);
 	default:
 		return -1;
 	}
 }
 
 static int
-respond_ping(struct session *s)
+respond_ping(int monitor, struct config *config, int afd, const struct message *req)
 {
-	return session_send(s, TYPE_PING, NULL);
+	struct message resp;
+
+	memcpy(resp.header.session_id, req->header.session_id, sizeof(resp.header.session_id));
+	memcpy(resp.header.network_id, config->network_id, sizeof(resp.header.network_id));
+	resp.header.type = TYPE_PING;
+	resp.header.node = config->node;
+	return message_send(monitor, afd, &resp, req->header.node.id);
 }
 
 static int
-respond_data(struct dht *dht, struct session *s, const struct message *msg)
+respond_fnode(int monitor, struct config *config, int afd, const struct message *req)
 {
-	if (storer_store(dht->storer, msg->payload.data.key, KEY_SIZE,
-		msg->payload.data.value, msg->payload.data.length) == -1) {
+	struct monitor_message mreq, mresp;
+	struct message resp;
+
+	mreq.type = M_FNODE;
+	mreq.payload.fnode.count = req->payload.fnode.count;
+	memcpy(mreq.payload.fnode.target_id, req->payload.fnode.target_id, sizeof(mreq.payload.fnode.target_id));
+	if (monitor_send(monitor, &mreq) == -1) {
 		return -1;
 	}
 
-	return session_send(s, TYPE_PING, NULL);
-}
-
-static int
-respond_fnode(struct dht *dht, struct session *s, const struct message *msg)
-{
-	return send_fnode_closest(dht, s, msg->payload.fnode.target_id,
-		msg->payload.fnode.count);
-}
-
-static int
-send_fnode_closest(struct dht *dht, struct session *s,
-	const uint8_t id[NODE_ID_SIZE], uint8_t k)
-{
-	size_t len;
-	struct node *closest;
-	union payload p;
-
-	if (k > K) {
-		k = K;
-	} else if (k == 0) {
+	if (monitor_recv(monitor, &mresp) == -1) {
+		return -1;
+	}
+	if (mresp.type != M_FNODE_RESP) {
+		monitor_close(&mresp);
 		return -1;
 	}
 
-	if (rtable_closest(&dht->rtable, id, k, &closest, &len) == -1) {
+	memcpy(resp.header.session_id, req->header.session_id, sizeof(resp.header.session_id));
+	memcpy(resp.header.network_id, config->network_id, sizeof(resp.header.network_id));
+	resp.header.type = TYPE_FNODE_RESP;
+	resp.header.node = config->node;
+	resp.payload.fnode_resp = mresp.payload.fnode_resp;
+	if (message_send(monitor, afd, &resp, req->header.node.id) == -1) {
+		monitor_close(&mresp);
 		return -1;
 	}
 
-	assert(len <= UINT8_MAX);
-	p.fnode_resp.count = (uint8_t)len;
-	p.fnode_resp.nodes = closest;
-
-	if (session_send(s, TYPE_FNODE_RESP, &p) == -1) {
-		free(closest);
-		return -1;
-	}
-
-	free(closest);
+	monitor_close(&mresp);
 	return 0;
 }
 
 static int
-respond_fval(struct dht *dht, struct session *s, const struct message *msg)
+respond_data(int monitor, struct config *config, int afd, const struct message *req)
 {
-	union payload p;
+	struct monitor_message mreq, mresp;
+	struct message resp;
 
-	p.data.value = storer_load(dht->storer, msg->payload.fval.key, KEY_SIZE,
-		&p.data.length);
-	if (p.data.value == -1) {
-		return send_fnode_closest(dht, s, msg->payload.fval.key, K);
-	}
-
-	if (session_send(s, TYPE_DATA, &p) == -1) {
-		(void)close(p.data.value);
+	mreq.type = M_DATA;
+	memcpy(mreq.payload.data.key, req->payload.data.key, sizeof(mreq.payload.data.key));
+	mreq.payload.data.length = req->payload.data.length;
+	mreq.payload.data.value = req->payload.data.value;
+	if (monitor_send(monitor, &mreq) == -1) {
 		return -1;
 	}
 
-	return close(p.data.value);
+	if (monitor_recv(monitor, &mresp) == -1) {
+		return -1;
+	}
+	if (mresp.type != M_PING) {
+		monitor_close(&mresp);
+		return -1;
+	}
+
+	memcpy(resp.header.session_id, req->header.session_id, sizeof(resp.header.session_id));
+	memcpy(resp.header.network_id, config->network_id, sizeof(resp.header.network_id));
+	resp.header.type = TYPE_PING;
+	resp.header.node = config->node;
+	if (message_send(monitor, afd, &resp, req->header.node.id) == -1) {
+		monitor_close(&mresp);
+		return -1;
+	}
+
+	monitor_close(&mresp);
+	return 0;
+}
+
+static int
+respond_fval(int monitor, struct config *config, int afd, const struct message *req)
+{
+	struct monitor_message mreq, mresp;
+	struct message resp;
+
+	mreq.type = M_FVAL;
+	memcpy(mreq.payload.fval.key, req->payload.fval.key, sizeof(mreq.payload.fval.key));
+	if (monitor_send(monitor, &mreq) == -1) {
+		return -1;
+	}
+
+	if (monitor_recv(monitor, &mresp) == -1) {
+		return -1;
+	}
+	switch (mresp.type) {
+	case M_DATA:
+		resp.header.type = TYPE_DATA;
+		resp.payload.data = mresp.payload.data;
+		break;
+	case M_FNODE_RESP:
+		resp.header.type = TYPE_FNODE_RESP;
+		resp.payload.fnode_resp = mresp.payload.fnode_resp;
+		break;
+	default:
+		monitor_close(&mresp);
+		return -1;
+	}
+
+	memcpy(resp.header.session_id, req->header.session_id, sizeof(resp.header.session_id));
+	memcpy(resp.header.network_id, config->network_id, sizeof(resp.header.network_id));
+	resp.header.node = config->node;
+	if (message_send(monitor, afd, &resp, req->header.node.id) == -1) {
+		monitor_close(&mresp);
+		return -1;
+	}
+
+	monitor_close(&mresp);
+	return 0;
 }
