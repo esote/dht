@@ -1,3 +1,8 @@
+include(CheckSymbolExists)
+
+add_subdirectory(compat)
+check_symbol_exists(imsg_init "imsg.h" HAVE_IMSG)
+
 add_executable(dhtd
 	crypto.c
 	crypto_sha3.c
@@ -28,6 +33,12 @@ add_library(dhtd_internal
 	rtable_sqlite.h
 	util.c
 	util.h)
+
+if (NOT HAVE_IMSG)
+	include_directories(${dhtd_SOURCE_DIR}/src/compat)
+	target_link_libraries(dhtd PRIVATE compat_imsg)
+	target_link_libraries(dhtd_internal PRIVATE compat_imsg)
+endif()
 
 #set_property(TARGET dhtd PROPERTY C_EXTENSIONS OFF)
 set_property(TARGET dhtd PROPERTY C_STANDARD 11)
