@@ -52,11 +52,13 @@ set_property(TARGET dhtd PROPERTY C_STANDARD_REQUIRED ON)
 find_package(Threads REQUIRED)
 find_package(SQLite3 REQUIRED)
 find_package(Sodium REQUIRED)
+find_package(LibEvent REQUIRED)
 target_link_libraries(dhtd
 	PRIVATE
 		Threads::Threads
 		SQLite::SQLite3
 		sodium
+		event
 )
 target_link_libraries(dhtd_internal
 	PRIVATE
