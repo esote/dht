@@ -11,5 +11,6 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -Wall")
 set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -O2 -Wall -D C1=2 -D C2=2")
 
 add_subdirectory(src)
+add_subdirectory(src2)
 enable_testing()
 add_subdirectory(test)
