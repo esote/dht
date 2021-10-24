@@ -14,18 +14,17 @@
 struct proc {
 	char *title;
 	int (*start)(void);
-	size_t nproc;
 	const char *root;
 };
 
 void usage(void);
 const struct proc *proc_search(const char *s, const struct proc *procs, size_t nprocs);
 void proc_init(const char *root);
-void proc_exec(char *progname, int fds[DHTD_NPROC]);
+void proc_exec(char *progname, int fds[DHTD_NUMPROC]);
 
 const struct proc procs[] = {
-	{ "listen", listen_start, LISTEN_NPROC, LISTEN_ROOT },
-	{ "rtable", rtable_start, RTABLE_NPROC, RTABLE_ROOT }
+	{ "listen", listen_start, LISTEN_ROOT },
+	{ "rtable", rtable_start, RTABLE_ROOT }
 };
 
 int
@@ -33,7 +32,7 @@ main(int argc, char *argv[])
 {
 	int c;
 	const struct proc *proc = NULL;
-	int fds[DHTD_NPROC];
+	int fds[DHTD_NUMPROC];
 
 	while ((c = getopt(argc, argv, "P:")) != -1) {
 		switch (c) {
@@ -114,7 +113,7 @@ proc_init(const char *root)
 }
 
 void
-proc_exec(char *progname, int fds[DHTD_NPROC])
+proc_exec(char *progname, int fds[DHTD_NUMPROC])
 {
 	size_t proc, i;
 	char *argv[] = { progname, "-P", NULL /* title */, NULL };
@@ -126,7 +125,7 @@ proc_exec(char *progname, int fds[DHTD_NPROC])
 
 	for (proc = 0; proc < nitems(procs); proc++) {
 		argv[proc_i] = procs[proc].title;
-		for (i = 0; i < procs[proc].nproc; i++) {
+		for (i = 0; i < DHTD_NUMPROC; i++) {
 			if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, PF_UNSPEC, sv) == -1) {
 				err(1, "socketpair");
 			}
