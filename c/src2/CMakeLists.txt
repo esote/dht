@@ -25,3 +25,9 @@ add_compile_definitions(dhtd2
 		_DEFAULT_SOURCE
 		_GNU_SOURCE
 )
+
+find_package(LibEvent REQUIRED)
+target_link_libraries(dhtd2
+	PRIVATE
+		event
+)

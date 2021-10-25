@@ -124,9 +124,3 @@ int listen_start(void);
 
 /* rtable.c */
 int rtable_start(void);
-
-const struct proc procs[] = {
-	[PROC_PARENT] = { "parent", PROC_PARENT, PARENT_ROOT, parent_start },
-	[PROC_LISTEN] = { "listen", PROC_LISTEN, LISTEN_ROOT, listen_start },
-	[PROC_RTABLE] = { "rtable", PROC_RTABLE, RTABLE_ROOT, rtable_start }
-};

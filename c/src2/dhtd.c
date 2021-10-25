@@ -20,9 +20,15 @@
 
 #include "dhtd.h"
 
+struct proc procs[PROC_MAX] = {
+	[PROC_PARENT] = { "parent", PROC_PARENT, PARENT_ROOT, parent_start },
+	[PROC_LISTEN] = { "listen", PROC_LISTEN, LISTEN_ROOT, listen_start },
+	[PROC_RTABLE] = { "rtable", PROC_RTABLE, RTABLE_ROOT, rtable_start }
+};
+
 void sighandler(evutil_socket_t sig, short events, void *arg);
 void usage(void);
-const struct proc *proc_search(const char *s, const struct proc *procs, size_t nprocs);
+struct proc *proc_search(const char *s);
 void proc_init(const struct proc *proc);
 void proc_exec(struct proc *proc, char *progname);
 void proc_exec_single(struct proc *proc, size_t p, size_t i, char *argv[]);
@@ -60,12 +66,12 @@ int
 main(int argc, char *argv[])
 {
 	int c;
-	const struct proc *proc = &procs[PROC_PARENT];
+	struct proc *proc = &procs[PROC_PARENT];
 
 	while ((c = getopt(argc, argv, "P:")) != -1) {
 		switch (c) {
 		case 'P':
-			if ((proc = proc_search(optarg, procs, nitems(procs))) == NULL) {
+			if ((proc = proc_search(optarg)) == NULL) {
 				errx(1, "invalid process title %s", optarg);
 			}
 			break;
@@ -87,11 +93,11 @@ main(int argc, char *argv[])
 	return EXIT_SUCCESS;
 }
 
-const struct proc *
-proc_search(const char *s, const struct proc *procs, size_t nprocs)
+struct proc *
+proc_search(const char *s)
 {
 	size_t i;
-	for (i = 0; i < nprocs; i++) {
+	for (i = 0; i < nitems(procs); i++) {
 		if (procs[i].id != PROC_PARENT && strcmp(s, procs[i].title) == 0) {
 			return &procs[i];
 		}
