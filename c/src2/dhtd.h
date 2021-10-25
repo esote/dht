@@ -15,6 +15,36 @@
 #define LISTEN_ROOT "/var/empty/"
 #define RTABLE_ROOT "/tmp/dhtd/"
 
+enum procid {
+	PROC_PARENT,
+	PROC_LISTEN,
+	PROC_RTABLE,
+	PROC_MAX
+};
+
+struct pipe {
+	int fd;
+	struct imsgbuf ibuf;
+	struct event *event;
+};
+
+struct proc {
+	char *title;
+	enum procid id;
+	const char *root;
+	int (*start)(void);
+
+	struct event_base *evbase;
+
+	struct event *evsigint;
+	struct event *evsigterm;
+	struct event *evsigchld;
+	struct event *evsigpipe;
+
+	/* only initialized in parent */
+	struct pipe pipes[PROC_MAX][DHTD_NUMPROC];
+};
+
 /* protocol */
 enum message_type {
 	PING = 0,
@@ -87,10 +117,16 @@ struct config {
 };
 
 /* parent.c */
-int parent_start(int fds[DHTD_NUMPROC]);
+int parent_start(void);
 
 /* listen.c */
 int listen_start(void);
 
 /* rtable.c */
 int rtable_start(void);
+
+const struct proc procs[] = {
+	[PROC_PARENT] = { "parent", PROC_PARENT, PARENT_ROOT, parent_start },
+	[PROC_LISTEN] = { "listen", PROC_LISTEN, LISTEN_ROOT, listen_start },
+	[PROC_RTABLE] = { "rtable", PROC_RTABLE, RTABLE_ROOT, rtable_start }
+};

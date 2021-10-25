@@ -11,7 +11,7 @@
 
 #include "dhtd.h"
 
-int parent_start(int fds[DHTD_NUMPROC])
+int parent_start(void)
 {
 	size_t i;
 	struct config config = {
@@ -27,10 +27,10 @@ int parent_start(int fds[DHTD_NUMPROC])
 	for (i = 0; i < DHTD_NUMPROC; i++) {
 		struct imsgbuf ibuf;
 		struct pollfd pfd = {
-			.fd = fds[i],
+			/* TODO .fd = fds[i], */
 			.events = POLLOUT
 		};
-		imsg_init(&ibuf, fds[i]);
+		imsg_init(&ibuf, -1 /* fds[i] */);
 		imsg_compose(&ibuf, IMSG_CONFIG, 0, 0, -1, &config, sizeof(config));
 		for (;;) {
 			switch (poll(&pfd, 1, -1)) {

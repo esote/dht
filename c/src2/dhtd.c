@@ -2,6 +2,7 @@
 #include <fcntl.h>
 #include <grp.h>
 #include <pwd.h>
+#include <signal.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,30 +10,57 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#ifdef HAVE_IMSG
+#include <imsg.h>
+#else
+#include "compat/imsg.h"
+#endif
+
+#include <event2/event.h>
+
 #include "dhtd.h"
 
-struct proc {
-	char *title;
-	int (*start)(void);
-	const char *root;
-};
-
+void sighandler(evutil_socket_t sig, short events, void *arg);
 void usage(void);
 const struct proc *proc_search(const char *s, const struct proc *procs, size_t nprocs);
-void proc_init(const char *root);
-void proc_exec(char *progname, int fds[DHTD_NUMPROC]);
+void proc_init(const struct proc *proc);
+void proc_exec(struct proc *proc, char *progname);
+void proc_exec_single(struct proc *proc, size_t p, size_t i, char *argv[]);
+void proc_run(struct proc *proc);
+void parent_shutdown(struct proc *proc);
 
-const struct proc procs[] = {
-	{ "listen", listen_start, LISTEN_ROOT },
-	{ "rtable", rtable_start, RTABLE_ROOT }
-};
+void
+sighandler(evutil_socket_t sig, short events, void *arg)
+{
+	struct proc *proc = arg;
+	(void)events;
+
+	switch (sig) {
+	case SIGINT:
+	case SIGTERM:
+		parent_shutdown(proc);
+		break;
+	case SIGPIPE:
+		/* ignore */
+		break;
+	case SIGCHLD:
+	default:
+		errx(1, "unexpected signal");
+	}
+}
+
+void
+usage(void)
+{
+	/* TODO */
+	exit(1);
+}
 
 int
 main(int argc, char *argv[])
 {
 	int c;
-	const struct proc *proc = NULL;
-	int fds[DHTD_NUMPROC];
+	const struct proc *proc = &procs[PROC_PARENT];
 
 	while ((c = getopt(argc, argv, "P:")) != -1) {
 		switch (c) {
@@ -51,20 +79,12 @@ main(int argc, char *argv[])
 		usage();
 	}
 
-	if (proc == NULL) {
-		proc_exec(argv[0], fds);
-		proc_init(PARENT_ROOT);
-		return parent_start(fds);
+	if (proc->id == PROC_PARENT) {
+		proc_exec(proc, argv[0]);
 	}
 
-	proc_init(proc->root);
-	return proc->start();
-}
-
-void
-usage(void)
-{
-	exit(1);
+	proc_run(proc);
+	return EXIT_SUCCESS;
 }
 
 const struct proc *
@@ -72,7 +92,7 @@ proc_search(const char *s, const struct proc *procs, size_t nprocs)
 {
 	size_t i;
 	for (i = 0; i < nprocs; i++) {
-		if (strcmp(s, procs[i].title) == 0) {
+		if (procs[i].id != PROC_PARENT && strcmp(s, procs[i].title) == 0) {
 			return &procs[i];
 		}
 	}
@@ -80,9 +100,13 @@ proc_search(const char *s, const struct proc *procs, size_t nprocs)
 }
 
 void
-proc_init(const char *root)
+proc_init(const struct proc *proc)
 {
 	struct passwd *pw;
+
+	if (setpgid(0, 0) == -1) {
+		err(1, "setpgid");
+	}
 
 	if ((pw = getpwnam(DHTD_USER)) == NULL) {
 		if (errno == 0) {
@@ -92,14 +116,14 @@ proc_init(const char *root)
 		}
 	}
 
-	if (chroot(root) == -1) {
-		err(1, "chroot %s", root);
+	if (chroot(proc->root) == -1) {
+		err(1, "chroot %s", proc->root);
 	}
 	if (chdir("/") == -1) {
 		err(1, "chdir '/'");
 	}
 
-	/* TODO: setproctitle */
+	/* TODO: setproctitle proc->title */
 
 	if (setgroups(1, &pw->pw_gid) == -1) {
 		err(1, "setgroups %u", pw->pw_gid);
@@ -110,65 +134,121 @@ proc_init(const char *root)
 	if (setresuid(pw->pw_uid, pw->pw_uid, pw->pw_uid) == -1) {
 		err(1, "setresuid %u", pw->pw_uid);
 	}
+
+	/* TODO: set up signal event handlers */
 }
 
 void
-proc_exec(char *progname, int fds[DHTD_NUMPROC])
+proc_exec(struct proc *proc, char *progname)
 {
-	size_t proc, i;
+	size_t p, i;
 	char *argv[] = { progname, "-P", NULL /* title */, NULL };
 	const size_t proc_i = 2;
+
+	for (p = 0; p < nitems(procs); p++) {
+		if (procs[p].id == PROC_PARENT) {
+			continue;
+		}
+		argv[proc_i] = procs[p].title;
+		for (i = 0; i < DHTD_NUMPROC; i++) {
+			proc_exec_single(proc, p, i, argv);
+		}
+	}
+}
+
+void
+proc_exec_single(struct proc *proc, size_t p, size_t i, char *argv[])
+{
 	int sv[2];
-	size_t nfd = 0;
 	int fd;
 
+	if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, PF_UNSPEC, sv) == -1) {
+		err(1, "socketpair");
+	}
 
-	for (proc = 0; proc < nitems(procs); proc++) {
-		argv[proc_i] = procs[proc].title;
-		for (i = 0; i < DHTD_NUMPROC; i++) {
-			if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, PF_UNSPEC, sv) == -1) {
-				err(1, "socketpair");
+	switch (fork()) {
+	case -1:
+		err(1, "fork");
+		break;
+	case 0:
+		if (setsid() == -1) {
+			err(1, "setsid");
+		}
+
+		if (sv[0] != CONTROL_FILENO) {
+			if ((sv[0] = dup2(sv[0], CONTROL_FILENO)) == -1) {
+				err(1, "dup2");
 			}
+		} else if (fcntl(sv[0], F_SETFD, 0) == -1) {
+			err(1, "fcntl");
+		}
 
-			switch (fork()) {
-			case -1:
-				err(1, "fork");
-				break;
-			case 0:
-				if (setsid() == -1) {
-					err(1, "setsid");
-				}
+		if ((fd = open(_PATH_DEVNULL, O_RDWR, 0)) == -1) {
+			err(1, "open %s", _PATH_DEVNULL);
+		}
+		if (dup2(fd, STDIN_FILENO) == -1
+			|| dup2(fd, STDOUT_FILENO) == -1
+			|| dup2(fd, STDERR_FILENO) == -1) {
+			err(1, "dup2");
+		}
+		if (fd > STDERR_FILENO && close(fd) == -1) {
+			err(1, "close");
+		}
 
-				if (sv[0] != CONTROL_FILENO) {
-					if ((sv[0] = dup2(sv[0], CONTROL_FILENO)) == -1) {
-						err(1, "dup2");
-					}
-				} else if (fcntl(sv[0], F_SETFD, 0) == -1) {
-					err(1, "fcntl");
-				}
+		execvp(argv[0], argv);
+		err(1, "execvp %s", argv[0]);
+		break;
+	default:
+		if (close(sv[0]) == -1) {
+			err(1, "close");
+		}
+		proc->pipes[p][i].fd = sv[1];
+		break;
+	}
+}
 
-				if ((fd = open(_PATH_DEVNULL, O_RDWR, 0)) == -1) {
-					err(1, "open %s", _PATH_DEVNULL);
-				}
-				if (dup2(fd, STDIN_FILENO) == -1
-					|| dup2(fd, STDOUT_FILENO) == -1
-					|| dup2(fd, STDERR_FILENO) == -1) {
-					err(1, "dup2");
-				}
-				if (fd > STDERR_FILENO && close(fd) == -1) {
-					err(1, "close");
-				}
+void
+proc_run(struct proc *proc)
+{
+	size_t p, i;
+	struct pipe *pipe;
 
-				execvp(argv[0], argv);
-				err(1, "execvp %s", argv[0]);
-				break;
-			default:
-				if (close(sv[0]) == -1) {
-					err(1, "close");
-				}
-				fds[nfd++] = sv[1];
-				break;
+	if ((proc->evbase = event_base_new()) == NULL) {
+		err(1, "event_base_new");
+	}
+
+	if ((proc->evsigint = evsignal_new(proc->evbase, SIGINT, sighandler, proc)) == NULL
+		|| (proc->evsigterm = evsignal_new(proc->evbase, SIGTERM, sighandler, proc)) == NULL
+		|| (proc->evsigchld = evsignal_new(proc->evbase, SIGCHLD, sighandler, proc)) == NULL
+		|| (proc->evsigpipe = evsignal_new(proc->evbase, SIGPIPE, sighandler, proc)) == NULL) {
+		err(1, "evsignal_new");
+	}
+
+	if (evsignal_add(proc->evsigint, NULL) == -1
+		|| evsignal_add(proc->evsigterm, NULL) == -1
+		|| evsignal_add(proc->evsigchld, NULL) == -1
+		|| evsignal_add(proc->evsigpipe, NULL) == -1) {
+		err(1, "evsignal_add");
+	}
+
+	if (proc->id == PROC_PARENT) {
+		for (p = 0; p < nitems(procs); p++) {
+			if (procs[p].id == PROC_PARENT) {
+				continue;
+			}
+			for (i = 0; i < DHTD_NUMPROC; i++) {
+				pipe = &proc->pipes[p][i];
+				imsg_init(&pipe->ibuf, pipe->fd);
+				/* TODO: event_new event_add */
 			}
 		}
 	}
+}
+
+void
+parent_shutdown(struct proc *proc)
+{
+	/* TODO */
+	(void)proc;
+	exit(1);
 }
